@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 카드를 누르면 상세 화면이 나오고 영상이 재생된다. 상세 링크를 새 창에서 열어도 같은 방송이 나온다
 - [x] 영상 요청에 Range가 있으면 206, `Content-Range`, `Accept-Ranges`와 정확한 바이트 범위가 온다. Range가 없으면 200과 전체 파일이 온다. `Content-Type`은 `video/mp4`다

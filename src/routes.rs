@@ -107,7 +107,7 @@ async fn try_register(state: &AppState, mut multipart: Multipart) -> Result<i64,
         match field.name() {
             // 제목이 영상보다 먼저 오므로(등록 화면이 그렇게 보낸다), 잘못된 제목이면 큰 영상을 받기 전에 거절한다.
             Some("title") => {
-                let text = field.text().await.map_err(|_| broken_upload())?;
+                let text = read_title(field).await?;
                 title = Some(validate_title(&text).map_err(|e| bad_request(e.code(), e.message()))?);
             }
             Some("video") => upload = Some(receive_video(state, field).await?),
@@ -128,6 +128,23 @@ async fn try_register(state: &AppState, mut multipart: Multipart) -> Result<i64,
         dioxus::logger::tracing::error!("방송 등록 실패: {e}");
         failure(StatusCode::INTERNAL_SERVER_ERROR, "server_error", "등록하지 못했어요. 잠시 뒤 다시 시도해 주세요.")
     })
+}
+
+/// 제목 칸으로 받을 최대 바이트. 100자 × 한 글자 최대 4바이트에 앞뒤 공백 여유를 더한 값이다.
+/// 본문 크기 제한은 영상 때문에 크므로, 제목 칸을 메모리에 모을 때는 따로 막는다.
+const MAX_TITLE_BYTES: usize = 4096;
+
+/// 제목 칸을 읽는다. 너무 길면 끝까지 읽지 않고 거절한다.
+async fn read_title(mut field: axum::extract::multipart::Field<'_>) -> Result<String, Response> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = field.chunk().await.map_err(|_| broken_upload())? {
+        if bytes.len() + chunk.len() > MAX_TITLE_BYTES {
+            let too_long = InvalidTitle::TooLong;
+            return Err(bad_request(too_long.code(), too_long.message()));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes).map_err(|_| broken_upload())
 }
 
 /// MP4 파일 앞부분 4~8바이트에 있는 표시.
@@ -398,6 +415,13 @@ pub(crate) mod tests {
     async fn 백_자를_넘는_제목은_400이다(pool: PgPool) {
         let app = app(pool);
         let body = multipart_body(Some(&"가".repeat(101)), Some(("clip.mp4", &tiny_mp4())));
+        assert_rejected(&app, body, StatusCode::BAD_REQUEST, "title_too_long").await;
+    }
+
+    #[sqlx::test]
+    async fn 아주_긴_제목_칸은_메모리에_모으지_않고_400이다(pool: PgPool) {
+        let app = app(pool);
+        let body = multipart_body(Some(&"a".repeat(1024 * 1024)), Some(("clip.mp4", &tiny_mp4())));
         assert_rejected(&app, body, StatusCode::BAD_REQUEST, "title_too_long").await;
     }
 

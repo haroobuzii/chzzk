@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 다음 경우는 400으로 거절된다.
   - 빈 제목, 공백만 있는 제목, 100자 초과 제목

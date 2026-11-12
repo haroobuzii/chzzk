@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] `docker compose up -d` 뒤 `dx serve`로 앱이 켜지고 `/`에 빈 목록 안내가 보인다
 - [x] 앱이 시작할 때 방송 표를 마이그레이션으로 만든다. 칸은 방송 번호(`GENERATED ALWAYS AS IDENTITY`), 제목(`CHECK` 1~100자), 영상 키, 등록 시각(`TIMESTAMPTZ`, 기본 현재 시각)이다
