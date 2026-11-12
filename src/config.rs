@@ -25,11 +25,15 @@ impl Config {
         let data_dir = read("DATA_DIR").map_or_else(|| PathBuf::from("./data"), PathBuf::from);
         let max_upload_bytes = match read("MAX_UPLOAD_BYTES") {
             None => DEFAULT_MAX_UPLOAD_BYTES,
-            Some(value) => value
-                .parse()
-                .with_context(|| format!("MAX_UPLOAD_BYTES는 바이트 단위 숫자여야 합니다: {value}"))?,
+            Some(value) => value.parse().with_context(|| {
+                format!("MAX_UPLOAD_BYTES는 바이트 단위 숫자여야 합니다: {value}")
+            })?,
         };
-        Ok(Self { database_url, data_dir, max_upload_bytes })
+        Ok(Self {
+            database_url,
+            data_dir,
+            max_upload_bytes,
+        })
     }
 }
 

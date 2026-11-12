@@ -53,7 +53,9 @@ pub fn api(state: AppState) -> Router {
         .route(
             "/api/broadcasts",
             // 이 라우트만 기본 본문 크기 제한(2 MB)을 업로드 최대 크기에 맞춰 늘린다.
-            post(register).layer(DefaultBodyLimit::max(usize::try_from(body_limit).unwrap_or(usize::MAX))),
+            post(register).layer(DefaultBodyLimit::max(
+                usize::try_from(body_limit).unwrap_or(usize::MAX),
+            )),
         )
         .route("/api/broadcasts/{number}/video", get(video))
         .with_state(state)
@@ -62,7 +64,11 @@ pub fn api(state: AppState) -> Router {
 /// `GET /api/broadcasts/{번호}/video`: 영상 원본을 변환 없이 보낸다(ADR 0001).
 ///
 /// Range 요청에는 206과 요청한 부분만 보내므로, 브라우저가 끝까지 내려받지 않고도 건너뛸 수 있다.
-async fn video(State(state): State<AppState>, Path(segment): Path<String>, request: Request<Body>) -> Response {
+async fn video(
+    State(state): State<AppState>,
+    Path(segment): Path<String>,
+    request: Request<Body>,
+) -> Response {
     let Some(id) = parse_number(&segment) else {
         return not_found();
     };
@@ -71,7 +77,11 @@ async fn video(State(state): State<AppState>, Path(segment): Path<String>, reque
         Ok(None) => return not_found(),
         Err(e) => {
             dioxus::logger::tracing::error!("영상 위치 조회 실패: {e}");
-            return failure(StatusCode::INTERNAL_SERVER_ERROR, "server_error", "영상을 불러오지 못했어요.");
+            return failure(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                "영상을 불러오지 못했어요.",
+            );
         }
     };
 
@@ -85,7 +95,11 @@ async fn video(State(state): State<AppState>, Path(segment): Path<String>, reque
 }
 
 fn not_found() -> Response {
-    failure(StatusCode::NOT_FOUND, "not_found", "방송을 찾을 수 없습니다.")
+    failure(
+        StatusCode::NOT_FOUND,
+        "not_found",
+        "방송을 찾을 수 없습니다.",
+    )
 }
 
 /// `POST /api/broadcasts`: multipart의 `title`과 `video`로 방송을 등록한다.
@@ -108,7 +122,8 @@ async fn try_register(state: &AppState, mut multipart: Multipart) -> Result<i64,
             // 제목이 영상보다 먼저 오므로(등록 화면이 그렇게 보낸다), 잘못된 제목이면 큰 영상을 받기 전에 거절한다.
             Some("title") => {
                 let text = read_title(field).await?;
-                title = Some(validate_title(&text).map_err(|e| bad_request(e.code(), e.message()))?);
+                title =
+                    Some(validate_title(&text).map_err(|e| bad_request(e.code(), e.message()))?);
             }
             Some("video") => upload = Some(receive_video(state, field).await?),
             // 모르는 칸은 읽지 않고 넘긴다.
@@ -126,7 +141,11 @@ async fn try_register(state: &AppState, mut multipart: Multipart) -> Result<i64,
 
     save(state, &title, upload).await.map_err(|e| {
         dioxus::logger::tracing::error!("방송 등록 실패: {e}");
-        failure(StatusCode::INTERNAL_SERVER_ERROR, "server_error", "등록하지 못했어요. 잠시 뒤 다시 시도해 주세요.")
+        failure(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "등록하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        )
     })
 }
 
@@ -178,7 +197,10 @@ async fn receive_video(
             return Err(failure(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "too_large",
-                &format!("영상 파일은 {}까지 올릴 수 있어요.", human_size(state.max_upload_bytes)),
+                &format!(
+                    "영상 파일은 {}까지 올릴 수 있어요.",
+                    human_size(state.max_upload_bytes)
+                ),
             ));
         }
         if head.len() < 8 {
@@ -238,12 +260,19 @@ async fn save(state: &AppState, title: &str, upload: NamedTempFile) -> anyhow::R
 
 /// 업로드 본문이 깨졌거나 중간에 끊긴 경우.
 fn broken_upload() -> Response {
-    bad_request("broken_upload", "업로드가 중간에 끊겼어요. 다시 시도해 주세요.")
+    bad_request(
+        "broken_upload",
+        "업로드가 중간에 끊겼어요. 다시 시도해 주세요.",
+    )
 }
 
 fn server_error(e: std::io::Error) -> Response {
     dioxus::logger::tracing::error!("영상 저장 실패: {e}");
-    failure(StatusCode::INTERNAL_SERVER_ERROR, "server_error", "영상을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.")
+    failure(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "server_error",
+        "영상을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+    )
 }
 
 /// 실패 응답: 상태 코드와 원인 코드, 한국어 메시지.
@@ -287,7 +316,11 @@ pub(crate) mod tests {
             videos: VideoStore::new(data_dir.path()),
             max_upload_bytes,
         };
-        TestApp { router: api(state), pool, data_dir }
+        TestApp {
+            router: api(state),
+            pool,
+            data_dir,
+        }
     }
 
     const BOUNDARY: &str = "----chzzk-test-boundary";
@@ -317,7 +350,10 @@ pub(crate) mod tests {
 
     pub fn register_request(body: Vec<u8>) -> Request<Body> {
         Request::post("/api/broadcasts")
-            .header("content-type", format!("multipart/form-data; boundary={BOUNDARY}"))
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={BOUNDARY}"),
+            )
             .body(Body::from(body))
             .unwrap()
     }
@@ -339,7 +375,9 @@ pub(crate) mod tests {
     }
 
     #[sqlx::test]
-    async fn 제목과_MP4로_등록하면_201과_번호가_오고_목록과_조회에_나타난다(pool: PgPool) {
+    async fn 제목과_MP4로_등록하면_201과_번호가_오고_목록과_조회에_나타난다(
+        pool: PgPool,
+    ) {
         let app = app(pool);
 
         let id = register_ok(&app, "첫 방송").await;
@@ -349,17 +387,25 @@ pub(crate) mod tests {
         assert_eq!(list[0].id, id);
         assert_eq!(list[0].title, "첫 방송");
 
-        let found = crate::db::find_broadcast(&app.pool, id).await.unwrap().unwrap();
+        let found = crate::db::find_broadcast(&app.pool, id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.title, "첫 방송");
     }
 
     #[sqlx::test]
-    async fn 영상은_보관_폴더에_저장되고_DB에는_상대_위치가_남는다(pool: PgPool) {
+    async fn 영상은_보관_폴더에_저장되고_DB에는_상대_위치가_남는다(
+        pool: PgPool,
+    ) {
         let app = app(pool);
 
         let id = register_ok(&app, "영상 확인").await;
 
-        let key = crate::db::find_video_key(&app.pool, id).await.unwrap().unwrap();
+        let key = crate::db::find_video_key(&app.pool, id)
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!key.starts_with('/'), "영상 키는 상대 위치여야 한다: {key}");
         let saved = std::fs::read(app.data_dir.path().join(&key)).unwrap();
         assert_eq!(saved, tiny_mp4());
@@ -373,30 +419,56 @@ pub(crate) mod tests {
         let second = register_ok(&app, "둘").await;
         let third = register_ok(&app, "셋").await;
 
-        let ids: Vec<i64> = crate::db::list_broadcasts(&app.pool).await.unwrap().iter().map(|b| b.id).collect();
+        let ids: Vec<i64> = crate::db::list_broadcasts(&app.pool)
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.id)
+            .collect();
         assert_eq!(ids, vec![third, second, first]);
     }
 
     /// 보관 폴더 안에 남은 파일 수(임시 파일 포함).
     fn leftover_files(dir: &std::path::Path) -> usize {
-        let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
         entries
             .map(|entry| entry.unwrap().path())
-            .map(|path| if path.is_dir() { leftover_files(&path) } else { 1 })
+            .map(|path| {
+                if path.is_dir() {
+                    leftover_files(&path)
+                } else {
+                    1
+                }
+            })
             .sum()
     }
 
     /// 거절된 등록이 방송도 파일도 남기지 않았는지 본다.
     async fn assert_nothing_left(app: &TestApp) {
-        assert!(crate::db::list_broadcasts(&app.pool).await.unwrap().is_empty(), "방송이 남으면 안 된다");
-        assert_eq!(leftover_files(app.data_dir.path()), 0, "보관 폴더에 파일이 남으면 안 된다");
+        assert!(
+            crate::db::list_broadcasts(&app.pool)
+                .await
+                .unwrap()
+                .is_empty(),
+            "방송이 남으면 안 된다"
+        );
+        assert_eq!(
+            leftover_files(app.data_dir.path()),
+            0,
+            "보관 폴더에 파일이 남으면 안 된다"
+        );
     }
 
     async fn assert_rejected(app: &TestApp, body: Vec<u8>, status: StatusCode, code: &str) {
         let (actual, json) = send(&app.router, register_request(body)).await;
         assert_eq!(actual, status, "응답: {json}");
         assert_eq!(json["code"], code);
-        assert!(json["message"].as_str().is_some_and(|m| !m.is_empty()), "한국어 이유가 있어야 한다");
+        assert!(
+            json["message"].as_str().is_some_and(|m| !m.is_empty()),
+            "한국어 이유가 있어야 한다"
+        );
         assert_nothing_left(app).await;
     }
 
@@ -421,7 +493,10 @@ pub(crate) mod tests {
     #[sqlx::test]
     async fn 아주_긴_제목_칸은_메모리에_모으지_않고_400이다(pool: PgPool) {
         let app = app(pool);
-        let body = multipart_body(Some(&"a".repeat(1024 * 1024)), Some(("clip.mp4", &tiny_mp4())));
+        let body = multipart_body(
+            Some(&"a".repeat(1024 * 1024)),
+            Some(("clip.mp4", &tiny_mp4())),
+        );
         assert_rejected(&app, body, StatusCode::BAD_REQUEST, "title_too_long").await;
     }
 
@@ -429,7 +504,10 @@ pub(crate) mod tests {
     async fn 앞뒤_공백은_지우고_저장한다(pool: PgPool) {
         let app = app(pool);
         let id = register_ok(&app, "  공백 제목  ").await;
-        let found = crate::db::find_broadcast(&app.pool, id).await.unwrap().unwrap();
+        let found = crate::db::find_broadcast(&app.pool, id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.title, "공백 제목");
     }
 
@@ -509,11 +587,18 @@ pub(crate) mod tests {
         if let Some(range) = range {
             request = request.header("range", range);
         }
-        app.router.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap()
+        app.router
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
     }
 
     async fn body_bytes(response: Response) -> Vec<u8> {
-        to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec()
     }
 
     #[sqlx::test]
@@ -535,15 +620,25 @@ pub(crate) mod tests {
         let id = register_ok(&app, "건너뛰기").await;
         let total = tiny_mp4().len();
 
-        let response = get_video(&app, &format!("/api/broadcasts/{id}/video"), Some("bytes=4-11")).await;
+        let response = get_video(
+            &app,
+            &format!("/api/broadcasts/{id}/video"),
+            Some("bytes=4-11"),
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(response.headers()["content-range"], format!("bytes 4-11/{total}"));
+        assert_eq!(
+            response.headers()["content-range"],
+            format!("bytes 4-11/{total}")
+        );
         assert_eq!(body_bytes(response).await, b"ftypisom");
     }
 
     #[sqlx::test]
-    async fn 없는_번호나_번호가_아닌_값으로_영상을_요청하면_404다(pool: PgPool) {
+    async fn 없는_번호나_번호가_아닌_값으로_영상을_요청하면_404다(
+        pool: PgPool,
+    ) {
         let app = app(pool);
         register_ok(&app, "하나뿐").await;
 
@@ -571,9 +666,14 @@ pub(crate) mod tests {
         };
         let router = api(restarted);
 
-        let found = crate::db::find_broadcast(&reopened, id).await.unwrap().unwrap();
+        let found = crate::db::find_broadcast(&reopened, id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.title, "재시작 뒤에도");
-        let request = Request::get(format!("/api/broadcasts/{id}/video")).body(Body::empty()).unwrap();
+        let request = Request::get(format!("/api/broadcasts/{id}/video"))
+            .body(Body::empty())
+            .unwrap();
         let response = router.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(body_bytes(response).await, tiny_mp4());

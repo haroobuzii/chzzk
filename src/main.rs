@@ -197,7 +197,10 @@ fn PageNotFound(rest: Vec<String>) -> Element {
 #[component]
 fn NotFound() -> Element {
     #[cfg(feature = "server")]
-    dioxus::fullstack::FullstackContext::commit_http_status(dioxus::fullstack::http::StatusCode::NOT_FOUND, None);
+    dioxus::fullstack::FullstackContext::commit_http_status(
+        dioxus::fullstack::http::StatusCode::NOT_FOUND,
+        None,
+    );
 
     rsx! {
         section { class: "empty",
@@ -226,7 +229,9 @@ fn NewBroadcast() -> Element {
         spawn(async move {
             match upload(move |percent| progress.set(percent)).await {
                 Ok(id) => {
-                    navigator.push(Route::BroadcastDetail { segment: id.to_string() });
+                    navigator.push(Route::BroadcastDetail {
+                        segment: id.to_string(),
+                    });
                 }
                 Err(message) => error.set(Some(message)),
             }
@@ -268,10 +273,9 @@ fn NewBroadcast() -> Element {
 async fn upload(mut on_progress: impl FnMut(u8)) -> Result<i64, String> {
     let mut script = document::eval(UPLOAD_SCRIPT);
     loop {
-        let message: UploadMessage = script
-            .recv()
-            .await
-            .map_err(|_| "등록 화면에 문제가 생겼어요. 새로고침한 뒤 다시 시도해 주세요.".to_string())?;
+        let message: UploadMessage = script.recv().await.map_err(|_| {
+            "등록 화면에 문제가 생겼어요. 새로고침한 뒤 다시 시도해 주세요.".to_string()
+        })?;
         match message {
             UploadMessage::Progress { percent } => on_progress(percent.min(100)),
             UploadMessage::Done { status, body } => return upload_result(status, &body),
@@ -329,7 +333,9 @@ xhr.send(data);
 /// 등록 시각을 한국 시간(UTC+9) `YYYY-MM-DD HH:MM`으로 쓴다.
 fn format_kst(time: &DateTime<Utc>) -> String {
     let kst = FixedOffset::east_opt(9 * 3600).expect("UTC+9는 올바른 시간대다");
-    time.with_timezone(&kst).format("%Y-%m-%d %H:%M").to_string()
+    time.with_timezone(&kst)
+        .format("%Y-%m-%d %H:%M")
+        .to_string()
 }
 
 #[cfg(test)]
@@ -338,7 +344,9 @@ mod tests {
 
     #[test]
     fn 등록_시각은_한국_시간으로_쓴다() {
-        let time = DateTime::parse_from_rfc3339("2026-11-12T15:30:00Z").unwrap().with_timezone(&Utc);
+        let time = DateTime::parse_from_rfc3339("2026-11-12T15:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         assert_eq!(format_kst(&time), "2026-11-13 00:30");
     }
 }

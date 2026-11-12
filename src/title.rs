@@ -66,13 +66,19 @@ mod tests {
     #[test]
     fn 백_자까지는_받고_백한_자는_거절한다() {
         assert!(validate_title(&"가".repeat(100)).is_ok());
-        assert_eq!(validate_title(&"가".repeat(101)), Err(InvalidTitle::TooLong));
+        assert_eq!(
+            validate_title(&"가".repeat(101)),
+            Err(InvalidTitle::TooLong)
+        );
     }
 
     #[test]
     fn 이모지와_한글은_한_글자로_센다() {
         assert!(validate_title(&"🎮".repeat(100)).is_ok());
-        assert_eq!(validate_title(&"🎮".repeat(101)), Err(InvalidTitle::TooLong));
+        assert_eq!(
+            validate_title(&"🎮".repeat(101)),
+            Err(InvalidTitle::TooLong)
+        );
     }
 
     #[test]

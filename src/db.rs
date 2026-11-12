@@ -7,7 +7,9 @@ use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions};
 use crate::Broadcast;
 
 /// DB에 접속하고, 아직 적용하지 않은 마이그레이션(표 만들기 등)을 적용한다.
-pub async fn connect(database_url: &str) -> Result<PgPool, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn connect(
+    database_url: &str,
+) -> Result<PgPool, Box<dyn std::error::Error + Send + Sync>> {
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(database_url)

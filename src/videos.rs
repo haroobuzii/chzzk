@@ -24,7 +24,10 @@ impl VideoStore {
     pub fn create_temp(&self) -> std::io::Result<NamedTempFile> {
         let dir = self.root.join("tmp");
         std::fs::create_dir_all(&dir)?;
-        tempfile::Builder::new().prefix("upload-").suffix(".part").tempfile_in(dir)
+        tempfile::Builder::new()
+            .prefix("upload-")
+            .suffix(".part")
+            .tempfile_in(dir)
     }
 
     /// 방송 번호로 영상 키를 짓는다.
