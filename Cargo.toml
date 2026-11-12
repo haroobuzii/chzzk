@@ -1,0 +1,20 @@
+[package]
+name = "chzzk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { version = "1", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+dioxus = { version = "0.7.10", features = ["fullstack", "router"] }
+dotenvy = { version = "0.15", optional = true }
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "macros", "migrate", "chrono"], optional = true }
+
+[features]
+default = ["web"]
+web = ["dioxus/web"]
+server = ["dioxus/server", "dep:sqlx", "dep:anyhow", "dep:dotenvy"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -1,0 +1,20 @@
+# 로컬 개발용 PostgreSQL.
+# 여기 적힌 비밀번호는 내 컴퓨터에서만 쓰는 개발용 값이다.
+# 5432는 다른 프로젝트가 쓰므로 5433으로 연다.
+# 어느 폴더에서 띄워도 같은 컨테이너와 볼륨을 쓰도록 프로젝트 이름을 고정한다.
+name: chzzk
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: chzzk
+      POSTGRES_PASSWORD: chzzk
+      POSTGRES_DB: chzzk
+    ports:
+      - "5433:5432"
+    volumes:
+      - chzzk-db-data:/var/lib/postgresql/data
+
+volumes:
+  chzzk-db-data:

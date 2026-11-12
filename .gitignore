@@ -1,1 +1,10 @@
 .DS_Store
+
+# Cargo 빌드 결과물
+/target
+
+# 비밀 값이 들어 있는 환경 변수 파일
+.env
+
+# 영상 보관 폴더
+/data

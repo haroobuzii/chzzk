@@ -6,9 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] `docker compose up -d` 뒤 `dx serve`로 앱이 켜지고 `/`에 빈 목록 안내가 보인다
-- [ ] 앱이 시작할 때 방송 표를 마이그레이션으로 만든다. 칸은 방송 번호(`GENERATED ALWAYS AS IDENTITY`), 제목(`CHECK` 1~100자), 영상 키, 등록 시각(`TIMESTAMPTZ`, 기본 현재 시각)이다
-- [ ] 목록 조회는 서버 함수로 DB를 읽고 등록 시각 내림차순이다
-- [ ] 환경변수 `DATABASE_URL`, `DATA_DIR`(기본 `./data`), `MAX_UPLOAD_BYTES`(기본 2 GiB)를 읽는다. `.env.example`은 로컬 예시 값만 담고, `.env`와 보관 폴더는 git에서 제외한다
-- [ ] 목록 조회 자동 테스트가 있다(`#[sqlx::test]`, 빈 DB → 빈 목록)
-- [ ] 휴대폰 폭에서도 머리글이 깨지지 않는다
+- [x] `docker compose up -d` 뒤 `dx serve`로 앱이 켜지고 `/`에 빈 목록 안내가 보인다
+- [x] 앱이 시작할 때 방송 표를 마이그레이션으로 만든다. 칸은 방송 번호(`GENERATED ALWAYS AS IDENTITY`), 제목(`CHECK` 1~100자), 영상 키, 등록 시각(`TIMESTAMPTZ`, 기본 현재 시각)이다
+- [x] 목록 조회는 서버 함수로 DB를 읽고 등록 시각 내림차순이다
+- [x] 환경변수 `DATABASE_URL`, `DATA_DIR`(기본 `./data`), `MAX_UPLOAD_BYTES`(기본 2 GiB)를 읽는다. `.env.example`은 로컬 예시 값만 담고, `.env`와 보관 폴더는 git에서 제외한다
+- [x] 목록 조회 자동 테스트가 있다(`#[sqlx::test]`, 빈 DB → 빈 목록)
+- [x] 휴대폰 폭에서도 머리글이 깨지지 않는다

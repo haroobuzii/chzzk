@@ -1,0 +1,12 @@
+[application]
+
+[web.app]
+# HTML title 태그 내용
+title = "녹화방송"
+
+[web.resource]
+style = []
+script = []
+
+[web.resource.dev]
+script = []
