@@ -211,6 +211,7 @@ fn NotFound() -> Element {
 #[component]
 fn NewBroadcast() -> Element {
     let mut pending = use_signal(|| false);
+    let mut progress = use_signal(|| 0u8);
     let mut error = use_signal(|| None::<String>);
     let navigator = use_navigator();
 
@@ -220,9 +221,10 @@ fn NewBroadcast() -> Element {
             return;
         }
         pending.set(true);
+        progress.set(0);
         error.set(None);
         spawn(async move {
-            match upload().await {
+            match upload(move |percent| progress.set(percent)).await {
                 Ok(id) => {
                     navigator.push(Route::BroadcastDetail { segment: id.to_string() });
                 }
@@ -246,6 +248,12 @@ fn NewBroadcast() -> Element {
             button { class: "button", r#type: "submit", disabled: pending(),
                 if pending() { "등록하는 중…" } else { "등록" }
             }
+            if pending() {
+                div { class: "upload-progress",
+                    progress { max: 100, value: progress() }
+                    span { role: "status", "{progress()}%" }
+                }
+            }
             if let Some(message) = error() {
                 p { class: "error", role: "alert", "{message}" }
             }
@@ -256,7 +264,8 @@ fn NewBroadcast() -> Element {
 /// 등록 화면의 입력을 multipart로 등록 API에 보낸다. 성공하면 새 방송 번호를 돌려준다.
 ///
 /// 업로드는 브라우저의 XMLHttpRequest가 보낸다. 큰 파일을 WASM 메모리로 옮기지 않기 위해서다.
-async fn upload() -> Result<i64, String> {
+/// 보내는 동안 `on_progress`로 진행률(0~100)을 알린다.
+async fn upload(mut on_progress: impl FnMut(u8)) -> Result<i64, String> {
     let mut script = document::eval(UPLOAD_SCRIPT);
     loop {
         let message: UploadMessage = script
@@ -264,6 +273,7 @@ async fn upload() -> Result<i64, String> {
             .await
             .map_err(|_| "등록 화면에 문제가 생겼어요. 새로고침한 뒤 다시 시도해 주세요.".to_string())?;
         match message {
+            UploadMessage::Progress { percent } => on_progress(percent.min(100)),
             UploadMessage::Done { status, body } => return upload_result(status, &body),
         }
     }
@@ -273,6 +283,8 @@ async fn upload() -> Result<i64, String> {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum UploadMessage {
+    /// 지금까지 보낸 비율(%).
+    Progress { percent: u8 },
     /// 업로드가 끝났다. `status`가 0이면 서버에 닿지 못했다.
     Done { status: u16, body: String },
 }
@@ -304,6 +316,11 @@ if (file) data.append("video", file, file.name);
 
 const xhr = new XMLHttpRequest();
 xhr.open("POST", "/api/broadcasts");
+xhr.upload.onprogress = (event) => {
+  if (event.lengthComputable) {
+    dioxus.send({ kind: "progress", percent: Math.floor((event.loaded / event.total) * 100) });
+  }
+};
 xhr.onload = () => dioxus.send({ kind: "done", status: xhr.status, body: xhr.responseText });
 xhr.onerror = () => dioxus.send({ kind: "done", status: 0, body: "" });
 xhr.send(data);

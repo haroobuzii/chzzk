@@ -183,3 +183,18 @@ h1 {
     color: #a0a3ab;
     text-decoration: none;
 }
+
+/* 업로드 진행률 */
+.upload-progress {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #c4c6cc;
+    font-size: 14px;
+}
+
+.upload-progress progress {
+    flex: 1;
+    height: 10px;
+    accent-color: #3b6ef5;
+}
