@@ -18,7 +18,12 @@ use tokio::io::AsyncWriteExt;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
-use crate::{config::Config, number::parse_number, videos::VideoStore};
+use crate::{
+    config::Config,
+    number::parse_number,
+    title::{validate_title, InvalidTitle},
+    videos::VideoStore,
+};
 
 /// 라우트들이 함께 쓰는 것: DB와 영상 보관소, 설정.
 #[derive(Clone)]
@@ -100,16 +105,23 @@ async fn try_register(state: &AppState, mut multipart: Multipart) -> Result<i64,
 
     while let Some(field) = multipart.next_field().await.map_err(|_| broken_upload())? {
         match field.name() {
-            Some("title") => title = Some(field.text().await.map_err(|_| broken_upload())?),
+            // 제목이 영상보다 먼저 오므로(등록 화면이 그렇게 보낸다), 잘못된 제목이면 큰 영상을 받기 전에 거절한다.
+            Some("title") => {
+                let text = field.text().await.map_err(|_| broken_upload())?;
+                title = Some(validate_title(&text).map_err(|e| bad_request(e.code(), e.message()))?);
+            }
             Some("video") => upload = Some(receive_video(state, field).await?),
             // 모르는 칸은 읽지 않고 넘긴다.
             _ => {}
         }
     }
 
-    let title = title.unwrap_or_default().trim().to_string();
+    let Some(title) = title else {
+        let empty = InvalidTitle::Empty;
+        return Err(bad_request(empty.code(), empty.message()));
+    };
     let Some(upload) = upload else {
-        return Err(failure(StatusCode::BAD_REQUEST, "missing_video", "영상 파일을 골라 주세요."));
+        return Err(bad_request("missing_video", "영상 파일을 골라 주세요."));
     };
 
     save(state, &title, upload).await.map_err(|e| {
@@ -118,19 +130,73 @@ async fn try_register(state: &AppState, mut multipart: Multipart) -> Result<i64,
     })
 }
 
+/// MP4 파일 앞부분 4~8바이트에 있는 표시.
+const MP4_SIGNATURE: &[u8; 4] = b"ftyp";
+
 /// 영상 칸을 조각조각 읽어 임시 파일에 바로 쓴다. 파일 전체를 메모리에 모으지 않는다.
+///
+/// 확장자와 앞부분 표시로 MP4인지 보고, 최대 크기를 넘으면 그 즉시 멈춘다. 코덱은 검사하지 않는다(ADR 0001).
+/// 어느 쪽이든 실패하면 임시 파일은 저절로 지워진다.
 async fn receive_video(
     state: &AppState,
     mut field: axum::extract::multipart::Field<'_>,
 ) -> Result<NamedTempFile, Response> {
+    let has_mp4_extension = field
+        .file_name()
+        .and_then(|name| name.rsplit_once('.'))
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("mp4"));
+    if !has_mp4_extension {
+        return Err(not_mp4());
+    }
+
     let temp = state.videos.create_temp().map_err(server_error)?;
     let mut file = tokio::fs::File::from_std(temp.as_file().try_clone().map_err(server_error)?);
+    let mut received: u64 = 0;
+    // 표시를 확인할 앞부분 8바이트. 조각이 작게 나뉘어 와도 모아서 본다.
+    let mut head = Vec::with_capacity(8);
 
     while let Some(chunk) = field.chunk().await.map_err(|_| broken_upload())? {
+        received += chunk.len() as u64;
+        if received > state.max_upload_bytes {
+            return Err(failure(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "too_large",
+                &format!("영상 파일은 {}까지 올릴 수 있어요.", human_size(state.max_upload_bytes)),
+            ));
+        }
+        if head.len() < 8 {
+            let take = (8 - head.len()).min(chunk.len());
+            head.extend_from_slice(&chunk[..take]);
+        }
         file.write_all(&chunk).await.map_err(server_error)?;
+    }
+
+    if head.len() < 8 || &head[4..8] != MP4_SIGNATURE {
+        return Err(not_mp4());
     }
     file.flush().await.map_err(server_error)?;
     Ok(temp)
+}
+
+/// 바이트 수를 사람이 읽기 좋게 쓴다. 예: 2 GiB → "2GB".
+fn human_size(bytes: u64) -> String {
+    const GB: u64 = 1024 * 1024 * 1024;
+    const MB: u64 = 1024 * 1024;
+    if bytes >= GB && bytes % GB == 0 {
+        format!("{}GB", bytes / GB)
+    } else if bytes >= MB {
+        format!("{}MB", bytes / MB)
+    } else {
+        format!("{bytes}바이트")
+    }
+}
+
+fn not_mp4() -> Response {
+    bad_request("not_mp4", "MP4 영상 파일만 올릴 수 있어요.")
+}
+
+fn bad_request(code: &str, message: &str) -> Response {
+    failure(StatusCode::BAD_REQUEST, code, message)
 }
 
 /// 방송 정보와 영상을 함께 저장한다. 둘 중 하나만 남는 일이 없게 한다.
@@ -155,7 +221,7 @@ async fn save(state: &AppState, title: &str, upload: NamedTempFile) -> anyhow::R
 
 /// 업로드 본문이 깨졌거나 중간에 끊긴 경우.
 fn broken_upload() -> Response {
-    failure(StatusCode::BAD_REQUEST, "broken_upload", "업로드가 중간에 끊겼어요. 다시 시도해 주세요.")
+    bad_request("broken_upload", "업로드가 중간에 끊겼어요. 다시 시도해 주세요.")
 }
 
 fn server_error(e: std::io::Error) -> Response {
@@ -292,6 +358,126 @@ pub(crate) mod tests {
 
         let ids: Vec<i64> = crate::db::list_broadcasts(&app.pool).await.unwrap().iter().map(|b| b.id).collect();
         assert_eq!(ids, vec![third, second, first]);
+    }
+
+    /// 보관 폴더 안에 남은 파일 수(임시 파일 포함).
+    fn leftover_files(dir: &std::path::Path) -> usize {
+        let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+        entries
+            .map(|entry| entry.unwrap().path())
+            .map(|path| if path.is_dir() { leftover_files(&path) } else { 1 })
+            .sum()
+    }
+
+    /// 거절된 등록이 방송도 파일도 남기지 않았는지 본다.
+    async fn assert_nothing_left(app: &TestApp) {
+        assert!(crate::db::list_broadcasts(&app.pool).await.unwrap().is_empty(), "방송이 남으면 안 된다");
+        assert_eq!(leftover_files(app.data_dir.path()), 0, "보관 폴더에 파일이 남으면 안 된다");
+    }
+
+    async fn assert_rejected(app: &TestApp, body: Vec<u8>, status: StatusCode, code: &str) {
+        let (actual, json) = send(&app.router, register_request(body)).await;
+        assert_eq!(actual, status, "응답: {json}");
+        assert_eq!(json["code"], code);
+        assert!(json["message"].as_str().is_some_and(|m| !m.is_empty()), "한국어 이유가 있어야 한다");
+        assert_nothing_left(app).await;
+    }
+
+    #[sqlx::test]
+    async fn 빈_제목과_공백뿐인_제목은_400이다(pool: PgPool) {
+        let app = app(pool);
+        for title in ["", "   "] {
+            let body = multipart_body(Some(title), Some(("clip.mp4", &tiny_mp4())));
+            assert_rejected(&app, body, StatusCode::BAD_REQUEST, "title_empty").await;
+        }
+        let body = multipart_body(None, Some(("clip.mp4", &tiny_mp4())));
+        assert_rejected(&app, body, StatusCode::BAD_REQUEST, "title_empty").await;
+    }
+
+    #[sqlx::test]
+    async fn 백_자를_넘는_제목은_400이다(pool: PgPool) {
+        let app = app(pool);
+        let body = multipart_body(Some(&"가".repeat(101)), Some(("clip.mp4", &tiny_mp4())));
+        assert_rejected(&app, body, StatusCode::BAD_REQUEST, "title_too_long").await;
+    }
+
+    #[sqlx::test]
+    async fn 앞뒤_공백은_지우고_저장한다(pool: PgPool) {
+        let app = app(pool);
+        let id = register_ok(&app, "  공백 제목  ").await;
+        let found = crate::db::find_broadcast(&app.pool, id).await.unwrap().unwrap();
+        assert_eq!(found.title, "공백 제목");
+    }
+
+    #[sqlx::test]
+    async fn 파일이_없으면_400이다(pool: PgPool) {
+        let app = app(pool);
+        let body = multipart_body(Some("파일 없음"), None);
+        assert_rejected(&app, body, StatusCode::BAD_REQUEST, "missing_video").await;
+    }
+
+    #[sqlx::test]
+    async fn 확장자가_mp4가_아니면_400이다(pool: PgPool) {
+        let app = app(pool);
+        for filename in ["clip.mov", "clip", "clip.mp4.txt"] {
+            let body = multipart_body(Some("다른 형식"), Some((filename, &tiny_mp4())));
+            assert_rejected(&app, body, StatusCode::BAD_REQUEST, "not_mp4").await;
+        }
+    }
+
+    #[sqlx::test]
+    async fn 확장자는_대소문자를_가리지_않는다(pool: PgPool) {
+        let app = app(pool);
+        let body = multipart_body(Some("대문자"), Some(("CLIP.MP4", &tiny_mp4())));
+        let (status, json) = send(&app.router, register_request(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "응답: {json}");
+    }
+
+    #[sqlx::test]
+    async fn 확장자만_mp4인_다른_파일은_400이다(pool: PgPool) {
+        let app = app(pool);
+        let fake_files: [&[u8]; 3] = [b"this is just text, not a video", b"", b"\0\0\0\x18ftx"];
+        for bytes in fake_files {
+            let body = multipart_body(Some("가짜"), Some(("clip.mp4", bytes)));
+            assert_rejected(&app, body, StatusCode::BAD_REQUEST, "not_mp4").await;
+        }
+    }
+
+    #[sqlx::test]
+    async fn 최대_크기를_넘으면_413이다(pool: PgPool) {
+        let video = tiny_mp4();
+        let app = app_with_limit(pool, (video.len() - 1) as u64);
+        let body = multipart_body(Some("너무 큼"), Some(("clip.mp4", &video)));
+        assert_rejected(&app, body, StatusCode::PAYLOAD_TOO_LARGE, "too_large").await;
+    }
+
+    #[sqlx::test]
+    async fn 최대_크기와_같으면_받는다(pool: PgPool) {
+        let video = tiny_mp4();
+        let app = app_with_limit(pool, video.len() as u64);
+        let body = multipart_body(Some("딱 맞음"), Some(("clip.mp4", &video)));
+        let (status, json) = send(&app.router, register_request(body)).await;
+        assert_eq!(status, StatusCode::CREATED, "응답: {json}");
+    }
+
+    #[sqlx::test]
+    async fn 업로드가_중간에_끊기면_아무것도_남지_않는다(pool: PgPool) {
+        let app = app(pool);
+        let mut body = multipart_body(Some("끊김"), Some(("clip.mp4", &tiny_mp4())));
+        // 영상 중간에서 본문을 자른다. 마지막 경계선이 오지 않는다.
+        body.truncate(body.len() - 30);
+        let (status, _) = send(&app.router, register_request(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_nothing_left(&app).await;
+    }
+
+    #[sqlx::test]
+    async fn 거절된_뒤에_같은_파일로_다시_등록할_수_있다(pool: PgPool) {
+        let app = app(pool);
+        let body = multipart_body(Some(""), Some(("clip.mp4", &tiny_mp4())));
+        assert_rejected(&app, body, StatusCode::BAD_REQUEST, "title_empty").await;
+
+        register_ok(&app, "다시 등록").await;
     }
 
     async fn get_video(app: &TestApp, path: &str, range: Option<&str>) -> Response {

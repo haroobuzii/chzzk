@@ -12,6 +12,8 @@ mod routes;
 #[cfg(feature = "server")]
 mod server;
 #[cfg(feature = "server")]
+mod title;
+#[cfg(feature = "server")]
 mod videos;
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
