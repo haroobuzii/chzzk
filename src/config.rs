@@ -8,7 +8,6 @@ use anyhow::Context;
 const DEFAULT_MAX_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // 보관 폴더와 최대 크기는 등록 기능(다음 티켓)에서 쓴다.
 pub struct Config {
     /// PostgreSQL 접속 주소. 반드시 있어야 한다.
     pub database_url: String,

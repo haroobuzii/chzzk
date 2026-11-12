@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -7,7 +7,11 @@ mod config;
 #[cfg(feature = "server")]
 mod db;
 #[cfg(feature = "server")]
+mod routes;
+#[cfg(feature = "server")]
 mod server;
+#[cfg(feature = "server")]
+mod videos;
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
@@ -90,9 +94,9 @@ fn BroadcastList() -> Element {
             }
         },
         Some(Ok(list)) => rsx! {
-            ul { class: "broadcast-list",
+            ul { class: "broadcast-grid",
                 for broadcast in list {
-                    li { key: "{broadcast.id}", "{broadcast.title}" }
+                    li { key: "{broadcast.id}", BroadcastCard { broadcast: broadcast.clone() } }
                 }
             }
         },
@@ -106,12 +110,135 @@ fn BroadcastList() -> Element {
     view
 }
 
-/// 방송 등록 화면. 등록 기능은 다음 단계에서 붙인다.
+/// 목록의 카드 하나: 썸네일 자리, 제목, 등록 시각.
+#[component]
+fn BroadcastCard(broadcast: Broadcast) -> Element {
+    rsx! {
+        article { class: "card",
+            // 썸네일은 1단계에서 만들지 않으므로 회색 빈 칸을 둔다.
+            div { class: "thumbnail" }
+            h2 { class: "card-title", title: "{broadcast.title}", "{broadcast.title}" }
+            p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
+        }
+    }
+}
+
+/// 방송 등록 화면: 제목과 MP4 파일을 받아 등록 API로 보낸다.
 #[component]
 fn NewBroadcast() -> Element {
+    let mut pending = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+    let navigator = use_navigator();
+
+    let submit = move |event: FormEvent| {
+        event.prevent_default();
+        if pending() {
+            return;
+        }
+        pending.set(true);
+        error.set(None);
+        spawn(async move {
+            match upload().await {
+                Ok(_id) => {
+                    navigator.push(Route::BroadcastList {});
+                }
+                Err(message) => error.set(Some(message)),
+            }
+            pending.set(false);
+        });
+    };
+
     rsx! {
         h1 { "방송 등록" }
-        p { "등록 화면은 준비 중입니다." }
+        form { id: "register-form", class: "register-form", onsubmit: submit,
+            label {
+                span { "제목" }
+                input { name: "title", r#type: "text", autocomplete: "off", disabled: pending() }
+            }
+            label {
+                span { "영상 파일 (MP4)" }
+                input { name: "video", r#type: "file", accept: "video/mp4,.mp4", disabled: pending() }
+            }
+            button { class: "button", r#type: "submit", disabled: pending(),
+                if pending() { "등록하는 중…" } else { "등록" }
+            }
+            if let Some(message) = error() {
+                p { class: "error", role: "alert", "{message}" }
+            }
+        }
+    }
+}
+
+/// 등록 화면의 입력을 multipart로 등록 API에 보낸다. 성공하면 새 방송 번호를 돌려준다.
+///
+/// 업로드는 브라우저의 XMLHttpRequest가 보낸다. 큰 파일을 WASM 메모리로 옮기지 않기 위해서다.
+async fn upload() -> Result<i64, String> {
+    let mut script = document::eval(UPLOAD_SCRIPT);
+    loop {
+        let message: UploadMessage = script
+            .recv()
+            .await
+            .map_err(|_| "등록 화면에 문제가 생겼어요. 새로고침한 뒤 다시 시도해 주세요.".to_string())?;
+        match message {
+            UploadMessage::Done { status, body } => return upload_result(status, &body),
+        }
+    }
+}
+
+/// 업로드 스크립트가 Rust 쪽으로 보내는 소식.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum UploadMessage {
+    /// 업로드가 끝났다. `status`가 0이면 서버에 닿지 못했다.
+    Done { status: u16, body: String },
+}
+
+/// 등록 API 응답을 방송 번호나 사용자에게 보여 줄 문구로 바꾼다.
+fn upload_result(status: u16, body: &str) -> Result<i64, String> {
+    let json: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    if status == 201 {
+        if let Some(id) = json["id"].as_i64() {
+            return Ok(id);
+        }
+    }
+    if status == 0 {
+        return Err("서버에 연결하지 못했어요. 잠시 뒤 다시 시도해 주세요.".into());
+    }
+    Err(json["message"]
+        .as_str()
+        .unwrap_or("등록하지 못했어요. 잠시 뒤 다시 시도해 주세요.")
+        .to_string())
+}
+
+/// 등록 화면의 입력을 읽어 XMLHttpRequest로 보내고, 결과를 `dioxus.send`로 알린다.
+const UPLOAD_SCRIPT: &str = r#"
+const form = document.getElementById("register-form");
+const data = new FormData();
+data.append("title", form.querySelector("[name=title]").value);
+const file = form.querySelector("[name=video]").files[0];
+if (file) data.append("video", file, file.name);
+
+const xhr = new XMLHttpRequest();
+xhr.open("POST", "/api/broadcasts");
+xhr.onload = () => dioxus.send({ kind: "done", status: xhr.status, body: xhr.responseText });
+xhr.onerror = () => dioxus.send({ kind: "done", status: 0, body: "" });
+xhr.send(data);
+"#;
+
+/// 등록 시각을 한국 시간(UTC+9) `YYYY-MM-DD HH:MM`으로 쓴다.
+fn format_kst(time: &DateTime<Utc>) -> String {
+    let kst = FixedOffset::east_opt(9 * 3600).expect("UTC+9는 올바른 시간대다");
+    time.with_timezone(&kst).format("%Y-%m-%d %H:%M").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn 등록_시각은_한국_시간으로_쓴다() {
+        let time = DateTime::parse_from_rfc3339("2026-11-12T15:30:00Z").unwrap().with_timezone(&Utc);
+        assert_eq!(format_kst(&time), "2026-11-13 00:30");
     }
 }
 

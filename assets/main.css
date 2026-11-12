@@ -68,3 +68,91 @@ main {
 .error {
     color: #ff6b6b;
 }
+
+h1 {
+    margin: 0 0 20px;
+    font-size: 22px;
+}
+
+/* 방송 목록: 카드 격자. 휴대폰 폭에서는 한 줄에 하나씩 놓인다. */
+.broadcast-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 20px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.card {
+    min-width: 0;
+}
+
+.card-link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
+/* 썸네일 자리: 16:9 회색 칸 */
+.thumbnail {
+    aspect-ratio: 16 / 9;
+    border-radius: 10px;
+    background: #2a2c33;
+}
+
+.card-title {
+    margin: 10px 0 4px;
+    overflow: hidden;
+    font-size: 16px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.card-time {
+    margin: 0;
+    color: #a0a3ab;
+    font-size: 13px;
+}
+
+/* 등록 화면 */
+.register-form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-width: 560px;
+}
+
+.register-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: #c4c6cc;
+    font-size: 14px;
+}
+
+.register-form input[type="text"] {
+    padding: 10px 12px;
+    font-size: 16px;
+    color: #e8e8ea;
+    background: #17181c;
+    border: 1px solid #33363d;
+    border-radius: 8px;
+}
+
+.register-form input[type="file"] {
+    font-size: 15px;
+    color: #e8e8ea;
+}
+
+.register-form .button {
+    align-self: flex-start;
+    border: none;
+    cursor: pointer;
+}
+
+.button:disabled {
+    opacity: 0.5;
+    cursor: default;
+}

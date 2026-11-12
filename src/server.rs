@@ -27,7 +27,9 @@ pub async fn router() -> anyhow::Result<Router> {
         let _ = POOL.set(pool);
     }
 
-    Ok(dioxus::server::router(crate::App))
+    let state = crate::routes::AppState::new(pool().clone(), config());
+    // Dioxus가 만든 화면·서버 함수 라우터에 등록 API 라우트를 덧붙인다.
+    Ok(dioxus::server::router(crate::App).merge(crate::routes::api(state)))
 }
 
 pub fn pool() -> &'static PgPool {
@@ -35,7 +37,6 @@ pub fn pool() -> &'static PgPool {
 }
 
 /// 서버 설정. 등록과 영상 전송에서 보관 폴더와 최대 크기를 읽을 때 쓴다.
-#[allow(dead_code)] // 등록 기능(다음 티켓)에서 쓴다.
 pub fn config() -> &'static Config {
     CONFIG.get().expect("router()가 먼저 설정을 읽어야 합니다")
 }
