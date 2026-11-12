@@ -156,3 +156,30 @@ h1 {
     opacity: 0.5;
     cursor: default;
 }
+
+/* 상세 화면: 위에 큰 영상, 아래에 제목과 등록 시각 */
+.detail {
+    max-width: 960px;
+    margin: 0 auto;
+}
+
+.player {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 10px;
+    background: black;
+}
+
+.detail-title {
+    margin: 16px 0 6px;
+    font-size: 22px;
+    overflow-wrap: anywhere;
+}
+
+.back-link {
+    display: inline-block;
+    margin-top: 20px;
+    color: #a0a3ab;
+    text-decoration: none;
+}

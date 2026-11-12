@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 mod config;
 #[cfg(feature = "server")]
 mod db;
+mod number;
 #[cfg(feature = "server")]
 mod routes;
 #[cfg(feature = "server")]
@@ -50,6 +51,20 @@ async fn get_broadcasts() -> Result<Vec<Broadcast>, ServerFnError> {
     }
 }
 
+/// 방송 번호로 방송 하나를 찾는다. 없으면 `None`.
+#[get("/api/broadcasts/info?id")]
+async fn get_broadcast(id: i64) -> Result<Option<Broadcast>, ServerFnError> {
+    match db::find_broadcast(server::pool(), id).await {
+        Ok(broadcast) => Ok(broadcast),
+        Err(e) => {
+            dioxus::logger::tracing::error!("방송 조회 실패: {e}");
+            Ok(HttpError::internal_server_error(
+                "방송을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+            )?)
+        }
+    }
+}
+
 #[derive(Routable, Clone, PartialEq)]
 enum Route {
     #[layout(Shell)]
@@ -57,6 +72,11 @@ enum Route {
     BroadcastList {},
     #[route("/new")]
     NewBroadcast {},
+    /// 방송 번호는 글자로 받아 직접 읽는다. 번호가 아닌 주소도 "방송을 찾을 수 없습니다"로 보여 주기 위해서다.
+    #[route("/broadcasts/:segment")]
+    BroadcastDetail { segment: String },
+    #[route("/:..rest")]
+    PageNotFound { rest: Vec<String> },
 }
 
 #[component]
@@ -115,10 +135,72 @@ fn BroadcastList() -> Element {
 fn BroadcastCard(broadcast: Broadcast) -> Element {
     rsx! {
         article { class: "card",
-            // 썸네일은 1단계에서 만들지 않으므로 회색 빈 칸을 둔다.
-            div { class: "thumbnail" }
-            h2 { class: "card-title", title: "{broadcast.title}", "{broadcast.title}" }
-            p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
+            Link { class: "card-link", to: Route::BroadcastDetail { segment: broadcast.id.to_string() },
+                // 썸네일은 1단계에서 만들지 않으므로 회색 빈 칸을 둔다.
+                div { class: "thumbnail" }
+                h2 { class: "card-title", title: "{broadcast.title}", "{broadcast.title}" }
+                p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
+            }
+        }
+    }
+}
+
+/// 상세 화면: 영상 재생기와 제목, 등록 시각.
+#[component]
+fn BroadcastDetail(segment: String) -> Element {
+    let broadcast = use_server_future(use_reactive!(|segment| async move {
+        match number::parse_number(&segment) {
+            Some(id) => get_broadcast(id).await,
+            // 번호가 아닌 주소는 DB를 보지 않는다.
+            None => Ok(None),
+        }
+    }))?;
+
+    let view = match &*broadcast.read() {
+        Some(Ok(Some(broadcast))) => rsx! {
+            article { class: "detail",
+                // 원본 MP4를 Range 요청으로 받으므로 끝까지 내려받지 않고도 건너뛸 수 있다.
+                // playsinline: iOS Safari에서 전체 화면으로 강제로 바뀌지 않고 화면 안에서 재생한다.
+                video {
+                    class: "player",
+                    src: "/api/broadcasts/{broadcast.id}/video",
+                    controls: true,
+                    playsinline: true,
+                    preload: "metadata",
+                }
+                h1 { class: "detail-title", "{broadcast.title}" }
+                p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
+                Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
+            }
+        },
+        Some(Ok(None)) => rsx! { NotFound {} },
+        Some(Err(e)) => rsx! {
+            p { class: "error", role: "alert", "{error_message(e)}" }
+        },
+        None => rsx! {
+            p { "불러오는 중…" }
+        },
+    };
+    view
+}
+
+/// 정해지지 않은 주소.
+#[component]
+fn PageNotFound(rest: Vec<String>) -> Element {
+    let _ = rest;
+    rsx! { NotFound {} }
+}
+
+/// "방송을 찾을 수 없습니다" 안내. 서버에서 그릴 때는 응답 상태를 404로 바꾼다.
+#[component]
+fn NotFound() -> Element {
+    #[cfg(feature = "server")]
+    dioxus::fullstack::FullstackContext::commit_http_status(dioxus::fullstack::http::StatusCode::NOT_FOUND, None);
+
+    rsx! {
+        section { class: "empty",
+            p { "방송을 찾을 수 없습니다" }
+            Link { class: "button", to: Route::BroadcastList {}, "목록으로" }
         }
     }
 }
@@ -139,8 +221,8 @@ fn NewBroadcast() -> Element {
         error.set(None);
         spawn(async move {
             match upload().await {
-                Ok(_id) => {
-                    navigator.push(Route::BroadcastList {});
+                Ok(id) => {
+                    navigator.push(Route::BroadcastDetail { segment: id.to_string() });
                 }
                 Err(message) => error.set(Some(message)),
             }

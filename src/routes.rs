@@ -1,21 +1,24 @@
-//! 서버 함수로 만들지 않고 직접 덧붙이는 HTTP 라우트: 방송 등록 API.
+//! 서버 함수로 만들지 않고 직접 덧붙이는 HTTP 라우트: 방송 등록 API와 영상 전송.
 //!
 //! 등록은 큰 영상 파일을 받으므로 본문을 메모리에 모으는 서버 함수 대신
 //! axum 라우트에서 multipart를 조각조각 읽어 임시 파일에 바로 쓴다.
 
 use axum::{
-    extract::{DefaultBodyLimit, Multipart, State},
-    http::StatusCode,
+    body::Body,
+    extract::{DefaultBodyLimit, Multipart, Path, State},
+    http::{Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde_json::json;
 use sqlx::PgPool;
 use tempfile::NamedTempFile;
 use tokio::io::AsyncWriteExt;
+use tower::ServiceExt;
+use tower_http::services::ServeFile;
 
-use crate::{config::Config, videos::VideoStore};
+use crate::{config::Config, number::parse_number, videos::VideoStore};
 
 /// 라우트들이 함께 쓰는 것: DB와 영상 보관소, 설정.
 #[derive(Clone)]
@@ -38,7 +41,7 @@ impl AppState {
 /// multipart 경계선과 제목 칸에 쓰일 여유분. 영상 크기는 따로 센다.
 const MULTIPART_OVERHEAD: u64 = 1024 * 1024;
 
-/// 등록 API 라우터.
+/// 등록 API와 영상 전송 라우터.
 pub fn api(state: AppState) -> Router {
     let body_limit = state.max_upload_bytes.saturating_add(MULTIPART_OVERHEAD);
     Router::new()
@@ -47,7 +50,37 @@ pub fn api(state: AppState) -> Router {
             // 이 라우트만 기본 본문 크기 제한(2 MB)을 업로드 최대 크기에 맞춰 늘린다.
             post(register).layer(DefaultBodyLimit::max(usize::try_from(body_limit).unwrap_or(usize::MAX))),
         )
+        .route("/api/broadcasts/{number}/video", get(video))
         .with_state(state)
+}
+
+/// `GET /api/broadcasts/{번호}/video`: 영상 원본을 변환 없이 보낸다(ADR 0001).
+///
+/// Range 요청에는 206과 요청한 부분만 보내므로, 브라우저가 끝까지 내려받지 않고도 건너뛸 수 있다.
+async fn video(State(state): State<AppState>, Path(segment): Path<String>, request: Request<Body>) -> Response {
+    let Some(id) = parse_number(&segment) else {
+        return not_found();
+    };
+    let key = match crate::db::find_video_key(&state.pool, id).await {
+        Ok(Some(key)) => key,
+        Ok(None) => return not_found(),
+        Err(e) => {
+            dioxus::logger::tracing::error!("영상 위치 조회 실패: {e}");
+            return failure(StatusCode::INTERNAL_SERVER_ERROR, "server_error", "영상을 불러오지 못했어요.");
+        }
+    };
+
+    // Range 처리는 검증된 구현(tower-http)에 맡긴다. 확장자가 .mp4라서 Content-Type은 video/mp4가 된다.
+    let file = ServeFile::new(state.videos.path_of(&key));
+    match file.oneshot(request).await {
+        Ok(response) if response.status() == StatusCode::NOT_FOUND => not_found(),
+        Ok(response) => response.map(Body::new),
+        Err(never) => match never {},
+    }
+}
+
+fn not_found() -> Response {
+    failure(StatusCode::NOT_FOUND, "not_found", "방송을 찾을 수 없습니다.")
 }
 
 /// `POST /api/broadcasts`: multipart의 `title`과 `video`로 방송을 등록한다.
@@ -144,7 +177,6 @@ pub(crate) mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::Request;
     use tempfile::TempDir;
-    use tower::ServiceExt;
 
     /// `ftyp` 시그니처만 갖춘 아주 작은 가짜 MP4. 코덱은 검사하지 않으므로 이것으로 충분하다.
     pub fn tiny_mp4() -> Vec<u8> {
@@ -260,6 +292,81 @@ pub(crate) mod tests {
 
         let ids: Vec<i64> = crate::db::list_broadcasts(&app.pool).await.unwrap().iter().map(|b| b.id).collect();
         assert_eq!(ids, vec![third, second, first]);
+    }
+
+    async fn get_video(app: &TestApp, path: &str, range: Option<&str>) -> Response {
+        let mut request = Request::get(path);
+        if let Some(range) = range {
+            request = request.header("range", range);
+        }
+        app.router.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap()
+    }
+
+    async fn body_bytes(response: Response) -> Vec<u8> {
+        to_bytes(response.into_body(), usize::MAX).await.unwrap().to_vec()
+    }
+
+    #[sqlx::test]
+    async fn Range_없이_영상을_요청하면_200과_전체_파일이_온다(pool: PgPool) {
+        let app = app(pool);
+        let id = register_ok(&app, "재생").await;
+
+        let response = get_video(&app, &format!("/api/broadcasts/{id}/video"), None).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "video/mp4");
+        assert_eq!(response.headers()["accept-ranges"], "bytes");
+        assert_eq!(body_bytes(response).await, tiny_mp4());
+    }
+
+    #[sqlx::test]
+    async fn Range_요청에는_206과_정확한_바이트_범위가_온다(pool: PgPool) {
+        let app = app(pool);
+        let id = register_ok(&app, "건너뛰기").await;
+        let total = tiny_mp4().len();
+
+        let response = get_video(&app, &format!("/api/broadcasts/{id}/video"), Some("bytes=4-11")).await;
+
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()["content-range"], format!("bytes 4-11/{total}"));
+        assert_eq!(body_bytes(response).await, b"ftypisom");
+    }
+
+    #[sqlx::test]
+    async fn 없는_번호나_번호가_아닌_값으로_영상을_요청하면_404다(pool: PgPool) {
+        let app = app(pool);
+        register_ok(&app, "하나뿐").await;
+
+        for segment in ["999", "0", "01", "abc", "99999999999999999999"] {
+            let response = get_video(&app, &format!("/api/broadcasts/{segment}/video"), None).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{segment}");
+        }
+    }
+
+    #[sqlx::test]
+    async fn DB에_새로_연결해도_방송과_영상이_그대로_조회된다(
+        pool_options: sqlx::postgres::PgPoolOptions,
+        options: sqlx::postgres::PgConnectOptions,
+    ) {
+        let app = app(pool_options.connect_with(options.clone()).await.unwrap());
+        let id = register_ok(&app, "재시작 뒤에도").await;
+
+        // 서버를 다시 켠 것처럼 같은 DB에 새 연결 풀을 열고, 같은 보관 폴더로 라우터를 다시 만든다.
+        app.pool.close().await;
+        let reopened = PgPool::connect_with(options).await.unwrap();
+        let restarted = AppState {
+            pool: reopened.clone(),
+            videos: VideoStore::new(app.data_dir.path()),
+            max_upload_bytes: 1024,
+        };
+        let router = api(restarted);
+
+        let found = crate::db::find_broadcast(&reopened, id).await.unwrap().unwrap();
+        assert_eq!(found.title, "재시작 뒤에도");
+        let request = Request::get(format!("/api/broadcasts/{id}/video")).body(Body::empty()).unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_bytes(response).await, tiny_mp4());
     }
 
     #[sqlx::test]
