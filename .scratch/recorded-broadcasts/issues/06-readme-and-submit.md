@@ -4,7 +4,7 @@
 
 **Blocked by:** 03, 04, 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] README에 아래 항목이 있다.
   - 요구 환경: Rust, Dioxus CLI 0.7, Docker
@@ -16,4 +16,4 @@
 - [x] README에 선택 확인 절차가 있다. 같은 와이파이의 휴대폰으로 컴퓨터 주소에 접속해 등록과 재생을 해 본다
 - [x] README에 테스트 실행 방법과 실제 실행 결과(통과 개수)가 있다
 - [x] 저장소에 비밀 값이 없다. `.env`와 보관 폴더는 git에서 제외되어 있다
-- [ ] 공개 저장소 `haroobuzii/chzzk`에 올리고 `step-1` 태그를 붙인다. 제출 주소는 `tree/step-1`이다
+- [x] 공개 저장소 `haroobuzii/chzzk`에 올리고 `step-1` 태그를 붙인다. 제출 주소는 `tree/step-1`이다
