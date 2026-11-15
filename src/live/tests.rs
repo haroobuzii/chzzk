@@ -15,7 +15,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use super::fake_mediamtx::{FakeMediaMtx, FAKE_ANSWER, FAKE_SECRET};
+use super::fake_mediamtx::{FakeMediaMtx, FAKE_ANSWER, FAKE_SECRET, FAKE_SESSION_ID};
 use super::{api, LiveState};
 use crate::{BroadcastKind, LiveStatus};
 
@@ -446,4 +446,223 @@ async fn MediaMTX에_닿지_못하면_맞추기는_실패하고_아무것도_바
         crate::db::find_broadcast(&app.pool, id).await.unwrap(),
         None
     );
+}
+
+// ── 방송 종료 ──
+
+/// 종료 요청. `key`가 `None`이면 Authorization 헤더를 넣지 않는다.
+pub fn end_request(id: i64, key: Option<&str>) -> Request<Body> {
+    let mut builder = Request::post(format!("/api/live/{id}/end"));
+    if let Some(key) = key {
+        builder = builder.header(header::AUTHORIZATION, format!("Bearer {key}"));
+    }
+    builder.body(Body::empty()).unwrap()
+}
+
+/// 저장소에서 본 방송 상태. 준비·버려짐은 조회 함수에 나오지 않으므로 이것으로 본다.
+async fn status_of(app: &LiveApp, id: i64) -> LiveStatus {
+    super::store::find_access(&app.pool, id)
+        .await
+        .unwrap()
+        .expect("라이브 방송이 있어야 한다")
+        .status
+}
+
+#[sqlx::test]
+async fn 맞는_키로_종료하면_204이고_종료가_되며_종료_시각이_생긴다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool).await;
+    let (id, key) = app.go_live("끝낼 방송", at(1)).await;
+    let before = Utc::now();
+
+    let response = app.request(end_request(id, Some(&key))).await;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let found = crate::db::find_broadcast(&app.pool, id)
+        .await
+        .unwrap()
+        .expect("종료된 방송은 조회된다");
+    assert_eq!(found.status, Some(LiveStatus::Ended));
+    assert_eq!(found.started_at, Some(at(1)));
+    let ended_at = found.ended_at.expect("종료 시각이 있어야 한다");
+    assert!(ended_at >= before - chrono::Duration::seconds(1));
+}
+
+#[sqlx::test]
+async fn 틀린_키로_종료하면_401이고_상태는_그대로다(pool: PgPool) {
+    let app = LiveApp::new(pool).await;
+    let (id, _) = app.go_live("그대로", at(1)).await;
+
+    for key in [None, Some("틀린-키")] {
+        let response = app.request(end_request(id, key)).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(body_json(response).await["message"].is_string());
+    }
+
+    assert_eq!(status_of(&app, id).await, LiveStatus::Live);
+}
+
+#[sqlx::test]
+async fn 준비_중에_종료하면_버려지고_조회되지_않는다(pool: PgPool) {
+    let app = LiveApp::new(pool).await;
+    let (id, key) = app.start_live("영상 없이 끝").await;
+
+    let response = app.request(end_request(id, Some(&key))).await;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(status_of(&app, id).await, LiveStatus::Abandoned);
+    assert_eq!(
+        crate::db::find_broadcast(&app.pool, id).await.unwrap(),
+        None
+    );
+}
+
+#[sqlx::test]
+async fn 두_번_종료해도_204이고_종료_시각은_처음_그대로다(pool: PgPool) {
+    let app = LiveApp::new(pool).await;
+    let (id, key) = app.go_live("두 번", at(1)).await;
+    app.request(end_request(id, Some(&key))).await;
+    let first = crate::db::find_broadcast(&app.pool, id)
+        .await
+        .unwrap()
+        .unwrap()
+        .ended_at;
+
+    let response = app.request(end_request(id, Some(&key))).await;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let found = crate::db::find_broadcast(&app.pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.status, Some(LiveStatus::Ended));
+    assert_eq!(found.ended_at, first);
+}
+
+#[sqlx::test]
+async fn 없는_번호를_종료하면_404다(pool: PgPool) {
+    let app = LiveApp::new(pool).await;
+
+    let response = app.request(end_request(424242, Some("아무-키"))).await;
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[sqlx::test]
+async fn 종료하면_MediaMTX의_송출_세션을_끊는다(pool: PgPool) {
+    let app = LiveApp::new(pool).await;
+    let (id, key) = app.go_live("끊기", at(1)).await;
+
+    app.request(end_request(id, Some(&key))).await;
+
+    let kicked = app.fake.requests().into_iter().any(|r| {
+        r.method == Method::POST && r.path == format!("/v3/webrtc/sessions/kick/{FAKE_SESSION_ID}")
+    });
+    assert!(kicked, "송출 세션 강제 종료 요청이 가야 한다");
+}
+
+#[sqlx::test]
+async fn MediaMTX가_고장이어도_종료는_204이고_종료가_된다(pool: PgPool) {
+    let app = LiveApp::new(pool).await;
+    let (id, key) = app.go_live("고장", at(1)).await;
+    app.fake.set_unreachable(true);
+
+    let response = app.request(end_request(id, Some(&key))).await;
+
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(status_of(&app, id).await, LiveStatus::Ended);
+}
+
+// ── 상태 감시기: 종료와 버려짐 ──
+
+#[sqlx::test]
+async fn 경로가_사라지면_방송_중이_종료가_되고_종료_시각이_남는다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool).await;
+    let (gone, _) = app.go_live("사라짐", at(1)).await;
+    let (still, _) = app.start_live("계속").await;
+    app.fake
+        .set_online(&[&format!("live/{gone}"), &format!("live/{still}")]);
+    app.sync(at(2)).await;
+
+    app.fake.set_online(&[&format!("live/{still}")]);
+    app.sync(at(8)).await;
+
+    let found = crate::db::find_broadcast(&app.pool, gone)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.status, Some(LiveStatus::Ended));
+    assert_eq!(found.started_at, Some(at(1)));
+    assert_eq!(found.ended_at, Some(at(8)));
+    assert_eq!(status_of(&app, still).await, LiveStatus::Live);
+}
+
+/// 준비 시각은 DB가 정하므로(시작할 때의 지금), 30초 경계는 실제 시각을 기준으로 넉넉히 떨어뜨려 본다.
+#[sqlx::test]
+async fn 준비로_30초가_지나도록_영상이_없으면_버려지고_그_전에는_그대로다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool).await;
+    let started = Utc::now();
+    let (id, _) = app.start_live("안 옴").await;
+
+    app.sync(started + chrono::Duration::seconds(20)).await;
+    assert_eq!(status_of(&app, id).await, LiveStatus::Ready);
+
+    app.sync(started + chrono::Duration::seconds(40)).await;
+    assert_eq!(status_of(&app, id).await, LiveStatus::Abandoned);
+}
+
+#[sqlx::test]
+async fn 종료된_방송은_경로가_다시_나타나도_방송_중이_되지_않는다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool).await;
+    let (ended, key) = app.go_live("끝남", at(1)).await;
+    app.request(end_request(ended, Some(&key))).await;
+    let (abandoned, key) = app.start_live("버려짐").await;
+    app.request(end_request(abandoned, Some(&key))).await;
+
+    app.fake
+        .set_online(&[&format!("live/{ended}"), &format!("live/{abandoned}")]);
+    app.sync(at(30)).await;
+
+    assert_eq!(status_of(&app, ended).await, LiveStatus::Ended);
+    assert_eq!(status_of(&app, abandoned).await, LiveStatus::Abandoned);
+}
+
+#[sqlx::test]
+async fn 같은_DB에_새로_연결해도_라이브_방송의_상태와_시각이_그대로_조회된다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool).await;
+    let (live, _) = app.go_live("방송 중", at(1)).await;
+    let (ended, _) = app.start_live("끝난 방송").await;
+    app.fake
+        .set_online(&[&format!("live/{live}"), &format!("live/{ended}")]);
+    app.sync(at(2)).await;
+    app.fake.set_online(&[&format!("live/{live}")]);
+    app.sync(at(9)).await;
+
+    let reconnected = PgPool::connect_with(app.pool.connect_options().as_ref().clone())
+        .await
+        .unwrap();
+
+    let found_live = crate::db::find_broadcast(&reconnected, live)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found_live.status, Some(LiveStatus::Live));
+    assert_eq!(found_live.started_at, Some(at(1)));
+    assert_eq!(found_live.ended_at, None);
+    let found_ended = crate::db::find_broadcast(&reconnected, ended)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found_ended.status, Some(LiveStatus::Ended));
+    assert_eq!(found_ended.started_at, Some(at(2)));
+    assert_eq!(found_ended.ended_at, Some(at(9)));
 }
