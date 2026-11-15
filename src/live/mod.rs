@@ -6,12 +6,15 @@
 pub mod key;
 pub mod mediamtx;
 pub mod store;
+pub mod watch;
 pub mod watcher;
 
 #[cfg(test)]
 pub mod fake_mediamtx;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod watch_tests;
 
 use axum::{
     body::Bytes,
@@ -49,7 +52,36 @@ pub fn api(state: LiveState) -> Router {
             "/api/live/{number}/whip/{session}",
             axum::routing::patch(publish_session).delete(publish_session),
         )
+        .route("/api/live/{number}/end", post(end))
+        .merge(watch::routes())
         .with_state(state)
+}
+
+/// `POST /api/live/{번호}/end`: 송출 키를 확인한 뒤 방송을 끝낸다.
+///
+/// 방송 중이면 종료, 준비면 버려짐이 되고 204다. 이미 끝난 방송도 204이고 그대로 둔다.
+/// 그다음 MediaMTX의 송출 세션도 끊는다. 실패해도 무시한다(경로가 남아 있어도 상태는 되돌아가지 않는다).
+async fn end(
+    State(state): State<LiveState>,
+    Path(segment): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let id = match authorize(&state, &segment, &headers).await {
+        Ok((id, _)) => id,
+        Err(response) => return response,
+    };
+    if let Err(e) = store::end(&state.pool, id, chrono::Utc::now()).await {
+        dioxus::logger::tracing::error!("라이브 방송 종료 실패: {e}");
+        return failure(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "방송을 끝내지 못했어요. 잠시 뒤 다시 시도해 주세요.",
+        );
+    }
+    if let Err(e) = state.mediamtx.kick_publisher(id).await {
+        dioxus::logger::tracing::warn!("송출 세션 끊기 실패(무시): {e:#}");
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 /// `POST /api/live`: JSON `{title}`로 라이브 방송을 준비 상태로 만든다.

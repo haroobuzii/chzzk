@@ -58,7 +58,48 @@ impl MediaMtx {
 
     /// 지금 영상이 들어오는(송출자가 연결된) 경로 이름 목록.
     pub async fn online_paths(&self) -> anyhow::Result<HashSet<String>> {
-        let mut online = HashSet::new();
+        Ok(self
+            .paths()
+            .await?
+            .into_iter()
+            .filter(|path| path.online)
+            .map(|path| path.name)
+            .collect())
+    }
+
+    /// 방송 번호 `id`의 경로에 연결된 송출 세션을 강제로 끊는다. 송출자가 없으면 아무것도 하지 않는다.
+    pub async fn kick_publisher(&self, id: i64) -> anyhow::Result<()> {
+        let name = path_of(id);
+        let sessions: Vec<String> = self
+            .paths()
+            .await?
+            .into_iter()
+            .filter(|path| path.name == name)
+            .filter_map(|path| path.source)
+            .filter(|source| source.kind == "webRTCSession")
+            .map(|source| source.id)
+            .collect();
+        for session in sessions {
+            let url = format!("{}/v3/webrtc/sessions/kick/{session}", self.api_url);
+            let response = self
+                .http
+                .post(&url)
+                .send()
+                .await
+                .context("MediaMTX 관리 API에 닿지 못했습니다")?;
+            if !response.status().is_success() {
+                bail!(
+                    "송출 세션 강제 종료에 MediaMTX가 {}로 응답했습니다",
+                    response.status()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// 관리 API의 경로 목록 전부(모든 쪽).
+    async fn paths(&self) -> anyhow::Result<Vec<ApiPath>> {
+        let mut paths = Vec::new();
         let mut page = 0;
         loop {
             let url = format!(
@@ -77,15 +118,10 @@ impl MediaMtx {
             let bytes = response.bytes().await?;
             let list: PathList =
                 serde_json::from_slice(&bytes).context("MediaMTX 경로 목록을 읽지 못했습니다")?;
-            online.extend(
-                list.items
-                    .into_iter()
-                    .filter(|path| path.online)
-                    .map(|path| path.name),
-            );
+            paths.extend(list.items);
             page += 1;
             if page >= list.page_count {
-                return Ok(online);
+                return Ok(paths);
             }
         }
     }
@@ -107,4 +143,16 @@ struct ApiPath {
     /// 송출자가 연결되어 영상이 들어오고 있으면 true.
     #[serde(default)]
     online: bool,
+    /// 영상을 보내는 쪽. 송출자가 없으면 null.
+    #[serde(default)]
+    source: Option<ApiSource>,
+}
+
+#[derive(Deserialize)]
+struct ApiSource {
+    /// 예: `webRTCSession`
+    #[serde(rename = "type")]
+    kind: String,
+    /// 세션 번호. 강제 종료 API에 쓴다.
+    id: String,
 }

@@ -18,6 +18,10 @@ enum Phase {
     Connecting,
     /// 송출 중. 방송 번호를 안다.
     Live { id: i64 },
+    /// "방송 종료"를 눌러 끝내는 중.
+    Ending { id: i64 },
+    /// 방송을 끝냈다. 연결과 카메라는 꺼졌다.
+    Ended { id: i64 },
 }
 
 /// JavaScript 명령의 결과.
@@ -144,6 +148,18 @@ pub fn NewLive() -> Element {
         }
     };
 
+    let end = move |_| {
+        let Phase::Live { id } = phase() else {
+            return;
+        };
+        phase.set(Phase::Ending { id });
+        spawn(async move {
+            // 종료 API가 실패해도 연결은 닫히므로 상태 감시기가 끝낸다. 화면은 끝난 것으로 보여 준다.
+            let _ = run("await chzzkPublisher.end();").await;
+            phase.set(Phase::Ended { id });
+        });
+    };
+
     let connecting = phase() == Phase::Connecting;
     rsx! {
         h1 { "라이브 시작" }
@@ -161,12 +177,15 @@ pub fn NewLive() -> Element {
                     span { class: "badge badge-live", "LIVE" }
                 }
             }
-            button {
-                class: "button secondary-button",
-                r#type: "button",
-                disabled: connecting || switching(),
-                onclick: switch_camera,
-                if switching() { "카메라 바꾸는 중…" } else { "카메라 전환" }
+            // 끝내는 중이거나 끝난 뒤에는 카메라가 꺼져 있으므로 전환 버튼을 감춘다.
+            if matches!(phase(), Phase::Preview | Phase::Connecting | Phase::Live { .. }) {
+                button {
+                    class: "button secondary-button",
+                    r#type: "button",
+                    disabled: connecting || switching(),
+                    onclick: switch_camera,
+                    if switching() { "카메라 바꾸는 중…" } else { "카메라 전환" }
+                }
             }
             match phase() {
                 Phase::Live { .. } => rsx! {
@@ -187,6 +206,14 @@ pub fn NewLive() -> Element {
                             if copied() { "복사됨" } else { "복사" }
                         }
                     }
+                    button { class: "button end-button", r#type: "button", onclick: end, "방송 종료" }
+                },
+                Phase::Ending { .. } => rsx! {
+                    button { class: "button end-button", r#type: "button", disabled: true, "끝내는 중…" }
+                },
+                Phase::Ended { id } => rsx! {
+                    p { class: "publisher-status", role: "status", "방송을 종료했습니다" }
+                    Link { class: "back-link", to: Route::BroadcastDetail { segment: id.to_string() }, "내 방송 보기 →" }
                 },
                 _ => rsx! {
                     form { class: "register-form", onsubmit: start,
@@ -276,6 +303,7 @@ async fn run_for_id(body: &str) -> Result<i64, String> {
 /// - `preview()`: 후면 카메라 1280×720과 마이크를 켜고 미리보기에 띄운다.
 /// - `start(title)`: 시작 API → RTCPeerConnection(sendonly) → ICE 수집 완료 → WHIP 송출 → 연결 확인. 방송 번호를 돌려준다.
 /// - `stop()`: 연결을 닫고 카메라·마이크를 끈다.
+/// - `end()`: 종료 API를 부른 뒤 `stop()`한다. 화면을 떠날 때(pagehide)는 keepalive 요청으로 종료를 시도한다.
 /// - `switchCamera()`: 전면·후면 카메라를 바꾼다. 송출 중이면 보내는 영상 트랙만 바꿔 끼워 연결은 그대로 둔다.
 /// - `holdsWakeLock()`: 화면 꺼짐 막기(Screen Wake Lock)를 걸고 있는지 알려 준다.
 /// - `describe(error)`: 에러를 `{ code }`(브라우저에서 생긴 실패) 또는 `{ message }`(서버가 준 문구)로 바꾼다.
@@ -503,6 +531,27 @@ window.chzzkPublisher ??= (() => {
     state.key = null;
   }
 
+  // 종료 API를 부른다. 실패해도 상태 감시기가 경로가 사라진 것을 보고 끝내므로 결과는 보지 않는다.
+  function requestEnd(keepalive) {
+    if (state.id == null || !state.key) return Promise.resolve();
+    return fetch(`/api/live/${state.id}/end`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${state.key}` },
+      keepalive,
+    }).catch(() => {});
+  }
+
+  // "방송 종료": 종료 API를 부른 뒤 연결을 닫고 카메라·마이크를 끈다.
+  async function end() {
+    await requestEnd(false);
+    stop();
+  }
+
+  // 송출 화면을 떠날 때(탭 닫기, 다른 사이트로 이동)도 종료를 시도한다. 페이지가 사라져도 요청이 가도록 keepalive를 쓴다.
+  window.addEventListener("pagehide", () => {
+    requestEnd(true);
+  });
+
   function describe(e) {
     if (e instanceof PublisherError) return e.code ? { code: e.code } : { message: e.message };
     if (e?.name === "NotAllowedError" || e?.name === "SecurityError") return { code: "permission_denied" };
@@ -511,7 +560,7 @@ window.chzzkPublisher ??= (() => {
     return { code: "unknown" };
   }
 
-  return { state, preview, start, stop, switchCamera, holdsWakeLock, describe };
+  return { state, preview, start, stop, end, switchCamera, holdsWakeLock, describe };
 })();
 "#;
 
