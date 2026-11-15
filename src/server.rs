@@ -7,9 +7,11 @@ use dioxus::server::axum::Router;
 use sqlx::PgPool;
 
 use crate::config::Config;
+use crate::live::{mediamtx::MediaMtx, LiveState};
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
 static POOL: OnceLock<PgPool> = OnceLock::new();
+static MEDIAMTX: OnceLock<MediaMtx> = OnceLock::new();
 
 /// 서버 라우터를 만든다. 처음 불릴 때 환경 변수를 읽고 DB에 접속한다.
 ///
@@ -23,13 +25,23 @@ pub async fn router() -> anyhow::Result<Router> {
         let pool = crate::db::connect(&config.database_url)
             .await
             .map_err(|e| anyhow!("DB에 접속하지 못했습니다: {e}"))?;
+        let mediamtx = MediaMtx::new(&config.mediamtx_webrtc_url, &config.mediamtx_api_url);
+        // 상태 감시기는 한 번만 띄운다. 켜지자마자 한 번 맞추므로, 꺼진 동안 바뀐 상태도 바로 맞춰진다.
+        crate::live::watcher::spawn(pool.clone(), mediamtx.clone());
         let _ = CONFIG.set(config);
         let _ = POOL.set(pool);
+        let _ = MEDIAMTX.set(mediamtx);
     }
 
     let state = crate::routes::AppState::new(pool().clone(), config());
-    // Dioxus가 만든 화면·서버 함수 라우터에 등록 API 라우트를 덧붙인다.
-    Ok(dioxus::server::router(crate::App).merge(crate::routes::api(state)))
+    let live = LiveState {
+        pool: pool().clone(),
+        mediamtx: MEDIAMTX.get().expect("위에서 정했다").clone(),
+    };
+    // Dioxus가 만든 화면·서버 함수 라우터에 등록 API와 라이브 API 라우트를 덧붙인다.
+    Ok(dioxus::server::router(crate::App)
+        .merge(crate::routes::api(state))
+        .merge(crate::live::api(live)))
 }
 
 pub fn pool() -> &'static PgPool {

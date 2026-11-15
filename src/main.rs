@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 mod config;
 #[cfg(feature = "server")]
 mod db;
+#[cfg(feature = "server")]
+mod live;
 mod number;
+mod publisher;
 #[cfg(feature = "server")]
 mod routes;
 #[cfg(feature = "server")]
@@ -15,6 +18,8 @@ mod server;
 mod title;
 #[cfg(feature = "server")]
 mod videos;
+
+use publisher::NewLive;
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
@@ -253,18 +258,6 @@ fn NotFound() -> Element {
     rsx! {
         section { class: "empty",
             p { "방송을 찾을 수 없습니다" }
-            Link { class: "button", to: Route::BroadcastList {}, "목록으로" }
-        }
-    }
-}
-
-/// 라이브 시작 화면. 송출 기능을 만들기 전까지는 준비 중 안내만 보여 준다.
-#[component]
-fn NewLive() -> Element {
-    rsx! {
-        h1 { "라이브 시작" }
-        section { class: "empty",
-            p { "라이브 방송은 준비 중입니다" }
             Link { class: "button", to: Route::BroadcastList {}, "목록으로" }
         }
     }

@@ -1,0 +1,50 @@
+# MediaMTX 설정(1.21.3). 라이브 방송의 영상만 중계한다(ADR 0004).
+# 적지 않은 값은 MediaMTX 기본값을 쓴다.
+#
+# 켜는 것은 WebRTC(WHIP 송출·WHEP 시청)와 관리 API뿐이다.
+# 두 HTTP 포트는 docker-compose.yml에서 127.0.0.1에만 열고, 휴대폰과 시청자는 우리 서버를 거쳐서만 닿는다.
+# 그래서 여기서는 따로 인증하지 않아도 송출 키 확인을 건너뛸 수 없다.
+
+logLevel: info
+
+# 관리 API: 상태 감시기가 "지금 영상이 들어오는 경로" 목록을 읽는다.
+api: true
+apiAddress: :9997
+
+# 쓰지 않는 기능은 모두 끈다.
+metrics: false
+pprof: false
+playback: false
+rtsp: false
+rtmp: false
+hls: false
+srt: false
+moq: false
+
+# WebRTC. HTTP(WHIP/WHEP)는 8889, 영상은 UDP 8189 하나로 주고받는다.
+webrtc: true
+webrtcAddress: :8889
+# 휴대폰과의 HTTPS는 터널이 맡고, 영상 자체는 DTLS-SRTP로 암호화된다.
+webrtcEncryption: false
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ""
+# 컨테이너 안의 IP(172.x)는 휴대폰이 쓸 수 없으므로 알리지 않는다.
+# 대신 docker-compose.yml이 MTX_WEBRTCADDITIONALHOSTS로 컴퓨터의 와이파이 IP(LAN_IP)를 넘긴다.
+webrtcIPsFromInterfaces: false
+webrtcAdditionalHosts: []
+
+# 누구나 송출·시청·관리 API를 쓸 수 있게 한다. HTTP 포트가 내 컴퓨터 안에만 열려 있어 괜찮다.
+# Docker Desktop에서는 컨테이너가 보는 요청 주소가 127.0.0.1이 아니므로, 기본값(관리 API는 localhost만)으로는 401이 난다.
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: api
+
+# 라이브 방송 하나는 경로 live/<방송 번호> 하나다. 경로는 미리 정하지 않는다.
+paths:
+  all_others:

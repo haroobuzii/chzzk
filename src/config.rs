@@ -15,10 +15,14 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// 업로드 최대 크기(바이트). 기본 2 GiB.
     pub max_upload_bytes: u64,
+    /// MediaMTX의 WebRTC HTTP(WHIP/WHEP) 주소. 기본 `http://localhost:8889`.
+    pub mediamtx_webrtc_url: String,
+    /// MediaMTX의 관리 API 주소. 기본 `http://localhost:9997`.
+    pub mediamtx_api_url: String,
 }
 
 impl Config {
-    /// `DATABASE_URL`, `DATA_DIR`, `MAX_UPLOAD_BYTES`를 읽는다.
+    /// `DATABASE_URL`, `DATA_DIR`, `MAX_UPLOAD_BYTES`, `MEDIAMTX_WEBRTC_URL`, `MEDIAMTX_API_URL`을 읽는다.
     /// 비어 있거나 없는 값은 기본값을 쓴다(`DATABASE_URL` 제외).
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = read("DATABASE_URL").context("DATABASE_URL 환경 변수가 필요합니다")?;
@@ -33,6 +37,10 @@ impl Config {
             database_url,
             data_dir,
             max_upload_bytes,
+            mediamtx_webrtc_url: read("MEDIAMTX_WEBRTC_URL")
+                .unwrap_or_else(|| "http://localhost:8889".into()),
+            mediamtx_api_url: read("MEDIAMTX_API_URL")
+                .unwrap_or_else(|| "http://localhost:9997".into()),
         })
     }
 }

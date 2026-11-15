@@ -246,3 +246,26 @@ h1 {
     height: 10px;
     accent-color: #3b6ef5;
 }
+
+/* 송출 화면: 위에 카메라 미리보기, 아래에 제목과 시작 버튼 */
+.publisher {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-width: 720px;
+}
+
+.publisher-preview {
+    position: relative;
+}
+
+.badge-live {
+    background: #e5383b;
+    color: white;
+    font-weight: 700;
+}
+
+.publisher-status {
+    margin: 0;
+    font-size: 16px;
+}

@@ -94,7 +94,7 @@ async fn video(
     }
 }
 
-fn not_found() -> Response {
+pub(crate) fn not_found() -> Response {
     failure(
         StatusCode::NOT_FOUND,
         "not_found",
@@ -234,7 +234,7 @@ fn not_mp4() -> Response {
     bad_request("not_mp4", "MP4 영상 파일만 올릴 수 있어요.")
 }
 
-fn bad_request(code: &str, message: &str) -> Response {
+pub(crate) fn bad_request(code: &str, message: &str) -> Response {
     failure(StatusCode::BAD_REQUEST, code, message)
 }
 
@@ -276,7 +276,7 @@ fn server_error(e: std::io::Error) -> Response {
 }
 
 /// 실패 응답: 상태 코드와 원인 코드, 한국어 메시지.
-fn failure(status: StatusCode, code: &str, message: &str) -> Response {
+pub(crate) fn failure(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({ "code": code, "message": message }))).into_response()
 }
 
