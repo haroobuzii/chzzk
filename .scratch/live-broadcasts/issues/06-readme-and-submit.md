@@ -22,10 +22,10 @@
 
 **Blocked by:** 03, 04, 05
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] README에 위 항목이 모두 있고, 1단계 항목도 남아 있다
 - [x] README의 명령(`docker compose up -d`, `dx serve`, `cloudflared`)을 실제로 실행해 확인했다
 - [x] 테스트 결과(통과 개수)가 실제 실행 결과와 같다
 - [x] 저장소에 비밀 값이 없다
-- [ ] 사용자 확인 뒤 GitHub에 올리고 `step-2` 태그를 붙인다. 제출 주소는 `tree/step-2`다
+- [x] 사용자 확인 뒤 GitHub에 올리고 `step-2` 태그를 붙인다. 제출 주소는 `tree/step-2`다
