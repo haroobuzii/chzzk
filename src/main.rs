@@ -119,21 +119,29 @@ async fn get_broadcast(id: i64) -> Result<Option<Broadcast>, ServerFnError> {
     }
 }
 
-#[derive(Routable, Clone, PartialEq)]
-enum Route {
-    #[layout(Shell)]
-    #[route("/")]
-    BroadcastList {},
-    #[route("/new")]
-    NewBroadcast {},
-    #[route("/live/new")]
-    NewLive {},
-    /// 방송 번호는 글자로 받아 직접 읽는다. 번호가 아닌 주소도 "방송을 찾을 수 없습니다"로 보여 주기 위해서다.
-    #[route("/broadcasts/:segment")]
-    BroadcastDetail { segment: String },
-    #[route("/:..rest")]
-    PageNotFound { rest: Vec<String> },
+// Rust 1.100부터 Dioxus 0.7의 `Routable` 매크로가 만든 코드에 "unreachable call" 경고가 난다.
+// 우리 코드가 아니라 매크로가 만든 코드라서, 화면 주소 정의만 작은 모듈에 담아 그 안에서만 끈다.
+#[allow(unreachable_code)]
+mod route {
+    use super::*;
+
+    #[derive(Routable, Clone, PartialEq)]
+    pub enum Route {
+        #[layout(Shell)]
+        #[route("/")]
+        BroadcastList {},
+        #[route("/new")]
+        NewBroadcast {},
+        #[route("/live/new")]
+        NewLive {},
+        /// 방송 번호는 글자로 받아 직접 읽는다. 번호가 아닌 주소도 "방송을 찾을 수 없습니다"로 보여 주기 위해서다.
+        #[route("/broadcasts/:segment")]
+        BroadcastDetail { segment: String },
+        #[route("/:..rest")]
+        PageNotFound { rest: Vec<String> },
+    }
 }
+use route::Route;
 
 #[component]
 fn App() -> Element {
