@@ -49,3 +49,57 @@ pub async fn mark_live(pool: &PgPool, ids: &[i64], now: DateTime<Utc>) -> Result
     .await?;
     Ok(result.rows_affected())
 }
+
+/// 방송 중 → 종료: 영상이 끊긴(경로가 사라진) 방송들의 상태를 바꾸고 종료 시각을 `now`로 남긴다.
+///
+/// `online_ids`에 없는 방송 중인 방송이 모두 대상이다. 바뀐 방송 수를 돌려준다.
+pub async fn end_missing(
+    pool: &PgPool,
+    online_ids: &[i64],
+    now: DateTime<Utc>,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE broadcasts SET status = 'ended', ended_at = $2
+         WHERE kind = 'live' AND status = 'live' AND NOT (id = ANY($1))",
+    )
+    .bind(online_ids)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// 준비 → 버려짐: `ready_since` 이전부터 준비였던(그 뒤로 영상이 들어오지 않은) 방송들을 버리고
+/// 종료 시각을 `now`로 남긴다. 준비 시작 시각은 방송을 만든 시각이다. 바뀐 방송 수를 돌려준다.
+pub async fn abandon_stale(
+    pool: &PgPool,
+    ready_since: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE broadcasts SET status = 'abandoned', ended_at = $2
+         WHERE kind = 'live' AND status = 'ready' AND created_at <= $1",
+    )
+    .bind(ready_since)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// 송출자의 종료 요청: 방송 중 → 종료, 준비 → 버려짐으로 바꾸고 종료 시각을 `now`로 남긴다.
+///
+/// 이미 종료됐거나 버려진 방송은 그대로 둔다.
+pub async fn end(pool: &PgPool, id: i64, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE broadcasts
+         SET status = CASE status WHEN 'live' THEN 'ended'::live_status ELSE 'abandoned'::live_status END,
+             ended_at = $2
+         WHERE id = $1 AND kind = 'live' AND status IN ('live', 'ready')",
+    )
+    .bind(id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}

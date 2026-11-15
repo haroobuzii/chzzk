@@ -18,6 +18,10 @@ enum Phase {
     Connecting,
     /// 송출 중. 방송 번호를 안다.
     Live { id: i64 },
+    /// "방송 종료"를 눌러 끝내는 중.
+    Ending { id: i64 },
+    /// 방송을 끝냈다. 연결과 카메라는 꺼졌다.
+    Ended { id: i64 },
 }
 
 /// JavaScript 명령의 결과.
@@ -71,6 +75,18 @@ pub fn NewLive() -> Element {
         });
     };
 
+    let end = move |_| {
+        let Phase::Live { id } = phase() else {
+            return;
+        };
+        phase.set(Phase::Ending { id });
+        spawn(async move {
+            // 종료 API가 실패해도 연결은 닫히므로 상태 감시기가 끝낸다. 화면은 끝난 것으로 보여 준다.
+            let _ = run("await chzzkPublisher.end();").await;
+            phase.set(Phase::Ended { id });
+        });
+    };
+
     let connecting = phase() == Phase::Connecting;
     rsx! {
         h1 { "라이브 시작" }
@@ -91,6 +107,14 @@ pub fn NewLive() -> Element {
             match phase() {
                 Phase::Live { id } => rsx! {
                     p { class: "publisher-status", role: "status", "방송 중입니다" }
+                    Link { class: "back-link", to: Route::BroadcastDetail { segment: id.to_string() }, "내 방송 보기 →" }
+                    button { class: "button end-button", r#type: "button", onclick: end, "방송 종료" }
+                },
+                Phase::Ending { .. } => rsx! {
+                    button { class: "button end-button", r#type: "button", disabled: true, "끝내는 중…" }
+                },
+                Phase::Ended { id } => rsx! {
+                    p { class: "publisher-status", role: "status", "방송을 종료했습니다" }
                     Link { class: "back-link", to: Route::BroadcastDetail { segment: id.to_string() }, "내 방송 보기 →" }
                 },
                 _ => rsx! {
@@ -151,6 +175,7 @@ async fn run_for_id(body: &str) -> Result<i64, String> {
 /// - `preview()`: 후면 카메라 1280×720과 마이크를 켜고 미리보기에 띄운다.
 /// - `start(title)`: 시작 API → RTCPeerConnection(sendonly) → ICE 수집 완료 → WHIP 송출 → 연결 확인. 방송 번호를 돌려준다.
 /// - `stop()`: 연결을 닫고 카메라·마이크를 끈다.
+/// - `end()`: 종료 API를 부른 뒤 `stop()`한다. 화면을 떠날 때(pagehide)는 keepalive 요청으로 종료를 시도한다.
 /// - `describe(error)`: 에러를 사용자에게 보여 줄 한국어 문구로 바꾼다.
 ///
 /// 상태(`stream`, `pc`, `video`, `id`, `key`, `session`)는 객체 안에 둔다. 송출 키는 여기에만 있다.
@@ -279,6 +304,27 @@ window.chzzkPublisher ??= (() => {
     state.key = null;
   }
 
+  // 종료 API를 부른다. 실패해도 상태 감시기가 경로가 사라진 것을 보고 끝내므로 결과는 보지 않는다.
+  function requestEnd(keepalive) {
+    if (state.id == null || !state.key) return Promise.resolve();
+    return fetch(`/api/live/${state.id}/end`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${state.key}` },
+      keepalive,
+    }).catch(() => {});
+  }
+
+  // "방송 종료": 종료 API를 부른 뒤 연결을 닫고 카메라·마이크를 끈다.
+  async function end() {
+    await requestEnd(false);
+    stop();
+  }
+
+  // 송출 화면을 떠날 때(탭 닫기, 다른 사이트로 이동)도 종료를 시도한다. 페이지가 사라져도 요청이 가도록 keepalive를 쓴다.
+  window.addEventListener("pagehide", () => {
+    requestEnd(true);
+  });
+
   function describe(e) {
     if (e instanceof PublisherError) return e.message;
     if (e?.name === "NotAllowedError" || e?.name === "SecurityError") {
@@ -293,6 +339,6 @@ window.chzzkPublisher ??= (() => {
     return "송출을 준비하지 못했어요. 새로고침한 뒤 다시 시도해 주세요.";
   }
 
-  return { state, preview, start, stop, describe };
+  return { state, preview, start, stop, end, describe };
 })();
 "#;

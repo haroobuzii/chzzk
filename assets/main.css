@@ -54,6 +54,14 @@ body {
     background: #e5383b;
 }
 
+/* 송출 화면의 "방송 종료". 실수로 누르지 않게 시작 버튼과 다른 어두운 색을 쓴다. */
+.end-button {
+    margin-top: 12px;
+    border: none;
+    background: #333;
+    cursor: pointer;
+}
+
 /* 좁은 휴대폰에서는 버튼을 줄여 서비스 이름과 두 버튼이 한 줄에 놓이게 한다. */
 @media (max-width: 400px) {
     .site-header {
