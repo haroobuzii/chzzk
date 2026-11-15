@@ -17,7 +17,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 종료 요청은 이렇게 응답한다.
   - 맞는 키면 204이고 종료가 되며 종료 시각이 생긴다

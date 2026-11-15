@@ -18,7 +18,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 시청 연결은 방송 중일 때만 가짜 MediaMTX로 넘어가고, 준비·종료는 409, 없는 번호는 404다. 세션 PATCH·DELETE도 넘어간다
 - [x] 녹화·방송 중·종료 방송이 섞인 목록이 정렬과 표시 규칙대로 나온다(라우터·서버 함수 테스트)

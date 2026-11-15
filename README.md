@@ -116,7 +116,7 @@
 | `src/publisher.rs` | 송출 화면 `/live/new`(카메라, WHIP 송출, 카메라 전환, 화면 꺼짐 막기, 안내 문구) |
 | `src/viewer.rs` | 라이브 시청 화면(WHEP 시청, 소리 켜기, 종료 안내) |
 | `src/display.rs` | 카드 표시(녹화·LIVE·종료), 카드 시각, 방송한 시간 |
-| `src/live/` | 라이브 방송 서버 쪽: 시작·종료와 WHIP 중계(`mod.rs`), 시청 중계(`watch.rs`), 저장소(`store.rs`), 송출 키(`key.rs`), MediaMTX 연결(`mediamtx.rs`), 상태 감시기(`watcher.rs`) |
+| `src/live/` | 라이브 방송 서버 쪽: 시작·종료와 WHIP 중계(`mod.rs`), 시청 중계(`watch.rs`), 저장소(`store.rs`), 송출 키(`key.rs`), MediaMTX 연결(`mediamtx.rs`), 상태 감시기(`status_sync.rs`) |
 | `src/title.rs` | 제목 규칙 |
 | `src/number.rs` | 주소의 방송 번호 읽기 |
 | `src/db.rs` | 방송 정보 저장과 조회 |
@@ -366,7 +366,7 @@ cargo test --no-default-features --features server
 
 ### 결과 (2026-11-15)
 
-- `cargo test`: 87개 모두 통과 (경고를 오류로 다루는 `RUSTFLAGS="-D warnings"`로 실행). 1단계 테스트 32개를 포함한다.
+- `cargo test`: 90개 모두 통과 (경고를 오류로 다루는 `RUSTFLAGS="-D warnings"`로 실행). 1단계 테스트 32개를 포함한다.
 - 직접 확인 (2단계)
   - 구현 중에 컴퓨터 브라우저에서 진짜 카메라 대신 브라우저의 가짜 카메라 장치로 송출하고, 다른 브라우저 창에서 시청하며 확인했다.
   - `docker compose up -d`로 PostgreSQL과 MediaMTX가 함께 뜨는 것(`docker compose ps`), `dx serve --platform web --port 8090`으로 다른 포트에서 앱이 뜨는 것, `cloudflared tunnel --url http://localhost:8090`이 `https://…trycloudflare.com` 주소를 만들고 그 HTTPS 주소로 목록·송출 화면과 시작 API가 동작하는 것을 확인했다.

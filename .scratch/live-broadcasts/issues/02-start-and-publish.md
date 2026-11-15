@@ -8,7 +8,7 @@ MediaMTX는 Docker Compose에 추가하고 설정 파일을 저장소에 둔다.
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] `docker compose up -d`로 DB와 MediaMTX가 함께 뜨고, MediaMTX의 HTTP 포트는 127.0.0.1에만 열린다
 - [x] `POST /api/live`에 맞는 제목을 보내면 201과 `{id, key}`가 오고, DB에는 키 원문이 아니라 해시만 있다. 제목 위반은 400이다

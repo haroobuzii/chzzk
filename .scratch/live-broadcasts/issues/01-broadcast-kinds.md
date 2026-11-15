@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 마이그레이션 뒤 기존 행은 녹화 방송이 되고, 1단계 테스트 32개가 수정 없이 통과한다
 - [x] 라이브 방송에 영상 키가 있거나 녹화 방송에 방송 상태가 있으면, 그 행은 DB 제약으로 거절된다
