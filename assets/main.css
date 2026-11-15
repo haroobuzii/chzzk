@@ -269,3 +269,36 @@ h1 {
     margin: 0;
     font-size: 16px;
 }
+
+/* 카메라 전환·복사처럼 주 동작이 아닌 버튼 */
+.secondary-button {
+    align-self: flex-start;
+    border: 1px solid #3a3d45;
+    background: #24262c;
+    cursor: pointer;
+}
+
+/* 송출 중 화면을 켜 두라는 안내 */
+.notice {
+    margin: 0;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: #3a3220;
+    color: #f5d27a;
+}
+
+/* 방송 중에 보여 주는 시청 주소와 복사 버튼 */
+.share-link {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    color: #c4c6cc;
+}
+
+.share-link a {
+    flex: 1;
+    min-width: 0;
+    color: #8fb0ff;
+    word-break: break-all;
+}
