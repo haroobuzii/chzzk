@@ -6,12 +6,15 @@
 pub mod key;
 pub mod mediamtx;
 pub mod store;
+pub mod watch;
 pub mod watcher;
 
 #[cfg(test)]
 pub mod fake_mediamtx;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod watch_tests;
 
 use axum::{
     body::Bytes,
@@ -49,6 +52,7 @@ pub fn api(state: LiveState) -> Router {
             "/api/live/{number}/whip/{session}",
             axum::routing::patch(publish_session).delete(publish_session),
         )
+        .merge(watch::routes())
         .with_state(state)
 }
 

@@ -232,6 +232,66 @@ h1 {
     text-decoration: none;
 }
 
+/* 목록의 "지금 라이브" 칸과 칸 제목 */
+.live-now {
+    margin-bottom: 32px;
+}
+
+.section-title {
+    margin: 0 0 14px;
+    font-size: 18px;
+}
+
+.badge-ended {
+    background: rgba(0, 0, 0, 0.6);
+    color: #a0a3ab;
+}
+
+/* 상세 제목 앞의 LIVE 표시(썸네일 위가 아니라 글자 줄 안에 놓인다) */
+.inline-badge {
+    display: inline-block;
+    margin-right: 8px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    vertical-align: middle;
+}
+
+/* 라이브 시청 화면: 영상 위 오른쪽 아래에 "소리 켜기" */
+.live-player-wrap {
+    position: relative;
+}
+
+.unmute-button {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+}
+
+/* 종료된 라이브: 영상 자리에 안내 */
+.live-ended {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    aspect-ratio: 16 / 9;
+    border-radius: 10px;
+    background: #2a2c33;
+    color: #a0a3ab;
+    text-align: center;
+}
+
+.live-ended p {
+    margin: 0;
+}
+
+.live-ended-title {
+    color: #e8e8ea;
+    font-size: 18px;
+    font-weight: 600;
+}
+
 /* 업로드 진행률 */
 .upload-progress {
     display: flex;

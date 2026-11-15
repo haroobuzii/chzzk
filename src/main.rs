@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 mod config;
 #[cfg(feature = "server")]
 mod db;
+mod display;
 #[cfg(feature = "server")]
 mod live;
 mod number;
@@ -18,8 +19,11 @@ mod server;
 mod title;
 #[cfg(feature = "server")]
 mod videos;
+mod viewer;
 
+use display::Mark;
 use publisher::NewLive;
+use viewer::{sleep_ms, LiveDetail, REFRESH_MS};
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
@@ -152,49 +156,98 @@ fn Shell() -> Element {
     }
 }
 
-/// 첫 화면: 방송 목록.
+/// 첫 화면: 방송 중인 방송을 모은 "지금 라이브" 칸과 전체 방송 목록. 5초마다 다시 불러온다.
 #[component]
 fn BroadcastList() -> Element {
     let broadcasts = use_server_future(get_broadcasts)?;
+    // 처음 목록은 서버가 그려 주고, 그 뒤로는 5초마다 새로 받은 목록으로 바꾼다.
+    let mut latest = use_signal(|| None::<Vec<Broadcast>>);
+    use_effect(move || {
+        spawn(async move {
+            loop {
+                sleep_ms(REFRESH_MS).await;
+                // 실패하면 지금 목록을 그대로 두고 다음에 다시 묻는다.
+                if let Ok(list) = get_broadcasts().await {
+                    if latest.peek().as_ref() != Some(&list) {
+                        latest.set(Some(list));
+                    }
+                }
+            }
+        });
+    });
 
-    let view = match &*broadcasts.read() {
-        Some(Ok(list)) if list.is_empty() => rsx! {
+    let initial = broadcasts.read();
+    let list = match (latest.read().clone(), &*initial) {
+        (Some(list), _) => list,
+        (None, Some(Ok(list))) => list.clone(),
+        (None, Some(Err(e))) => {
+            return rsx! {
+                p { class: "error", role: "alert", "{error_message(e)}" }
+            }
+        }
+        (None, None) => {
+            return rsx! {
+                p { "불러오는 중…" }
+            }
+        }
+    };
+
+    if list.is_empty() {
+        return rsx! {
             section { class: "empty",
                 p { "아직 방송이 없습니다" }
                 Link { class: "button", to: Route::NewBroadcast {}, "녹화 올리기" }
             }
-        },
-        Some(Ok(list)) => rsx! {
-            ul { class: "broadcast-grid",
-                for broadcast in list {
-                    li { key: "{broadcast.id}", BroadcastCard { broadcast: broadcast.clone() } }
+        };
+    }
+    let on_air: Vec<Broadcast> = list
+        .iter()
+        .filter(|b| b.mark() == Mark::Live)
+        .cloned()
+        .collect();
+    rsx! {
+        // 방송 중인 방송이 없으면 이 칸은 보이지 않는다.
+        if !on_air.is_empty() {
+            section { class: "live-now",
+                h2 { class: "section-title", "지금 라이브" }
+                ul { class: "broadcast-grid",
+                    for broadcast in on_air {
+                        li { key: "{broadcast.id}", BroadcastCard { broadcast } }
+                    }
                 }
             }
-        },
-        Some(Err(e)) => rsx! {
-            p { class: "error", role: "alert", "{error_message(e)}" }
-        },
-        None => rsx! {
-            p { "불러오는 중…" }
-        },
-    };
-    view
+        }
+        section {
+            if list.iter().any(|b| b.mark() == Mark::Live) {
+                h2 { class: "section-title", "전체 방송" }
+            }
+            ul { class: "broadcast-grid",
+                for broadcast in list {
+                    li { key: "{broadcast.id}", BroadcastCard { broadcast } }
+                }
+            }
+        }
+    }
 }
 
-/// 목록의 카드 하나: 썸네일 자리와 종류 표시, 제목, 등록 시각.
+/// 목록의 카드 하나: 썸네일 자리와 표시(녹화·LIVE·종료), 제목, 시각.
+/// 시각은 녹화는 등록 시각, 라이브는 시작 시각이다.
 #[component]
 fn BroadcastCard(broadcast: Broadcast) -> Element {
+    let (badge_class, badge) = match broadcast.mark() {
+        Mark::Recorded => ("badge badge-recorded", "녹화"),
+        Mark::Live => ("badge badge-live", "LIVE"),
+        Mark::Ended => ("badge badge-ended", "종료"),
+    };
     rsx! {
         article { class: "card",
             Link { class: "card-link", to: Route::BroadcastDetail { segment: broadcast.id.to_string() },
-                // 썸네일은 만들지 않으므로 회색 빈 칸을 두고, 왼쪽 위에 방송 종류를 표시한다.
+                // 썸네일은 만들지 않으므로 회색 빈 칸을 두고, 왼쪽 위에 표시를 붙인다.
                 div { class: "thumbnail",
-                    if broadcast.kind == BroadcastKind::Recorded {
-                        span { class: "badge badge-recorded", "녹화" }
-                    }
+                    span { class: badge_class, "{badge}" }
                 }
                 h2 { class: "card-title", title: "{broadcast.title}", "{broadcast.title}" }
-                p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
+                p { class: "card-time", "{format_kst(&broadcast.shown_time())}" }
             }
         }
     }
@@ -212,6 +265,10 @@ fn BroadcastDetail(segment: String) -> Element {
     }))?;
 
     let view = match &*broadcast.read() {
+        // 라이브 방송은 시청 화면 또는 종료 안내. 번호가 바뀌면 새로 그린다.
+        Some(Ok(Some(broadcast))) if broadcast.kind == BroadcastKind::Live => rsx! {
+            LiveDetail { key: "{broadcast.id}", broadcast: broadcast.clone() }
+        },
         Some(Ok(Some(broadcast))) => rsx! {
             article { class: "detail",
                 // 원본 MP4를 Range 요청으로 받으므로 끝까지 내려받지 않고도 건너뛸 수 있다.
@@ -383,7 +440,7 @@ xhr.onerror = () => dioxus.send({ kind: "done", status: 0, body: "" });
 xhr.send(data);
 "#;
 
-/// 등록 시각을 한국 시간(UTC+9) `YYYY-MM-DD HH:MM`으로 쓴다.
+/// 시각을 한국 시간(UTC+9) `YYYY-MM-DD HH:MM`으로 쓴다.
 fn format_kst(time: &DateTime<Utc>) -> String {
     let kst = FixedOffset::east_opt(9 * 3600).expect("UTC+9는 올바른 시간대다");
     time.with_timezone(&kst)
