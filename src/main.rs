@@ -28,15 +28,54 @@ fn main() {
     dioxus::launch(App);
 }
 
-/// 방송 하나. 제목 하나와 영상 하나를 가진다.
+/// 방송 하나. 녹화 방송이면 영상 하나를, 라이브 방송이면 방송 상태와 시작·종료 시각을 가진다.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "server", derive(sqlx::FromRow))]
 pub struct Broadcast {
-    /// 방송 번호. DB가 1부터 매긴다.
+    /// 방송 번호. DB가 1부터 매긴다. 녹화·라이브가 같은 번호 줄을 쓴다.
     pub id: i64,
     pub title: String,
-    /// 등록 시각.
+    /// 등록 시각. 라이브 방송은 시작 API를 부른 시각이다.
     pub created_at: DateTime<Utc>,
+    pub kind: BroadcastKind,
+    /// 방송 상태. 라이브 방송만 가진다.
+    pub status: Option<LiveStatus>,
+    /// 시작 시각. 방송 중·종료인 라이브 방송만 가진다.
+    pub started_at: Option<DateTime<Utc>>,
+    /// 종료 시각. 종료된 라이브 방송만 가진다.
+    pub ended_at: Option<DateTime<Utc>>,
+}
+
+/// 방송 종류.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "server",
+    derive(sqlx::Type),
+    sqlx(type_name = "broadcast_kind", rename_all = "lowercase")
+)]
+pub enum BroadcastKind {
+    /// 녹화 방송: 올린 영상 파일을 다시 본다.
+    Recorded,
+    /// 라이브 방송: 휴대폰이 지금 보내는 영상을 시청한다.
+    Live,
+}
+
+/// 라이브 방송의 방송 상태.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "server",
+    derive(sqlx::Type),
+    sqlx(type_name = "live_status", rename_all = "lowercase")
+)]
+pub enum LiveStatus {
+    /// 준비: 시작했지만 아직 영상이 들어오지 않았다. 화면에 보이지 않는다.
+    Ready,
+    /// 방송 중.
+    Live,
+    /// 종료.
+    Ended,
+    /// 버려짐: 준비에서 끝내 방송 중이 되지 못했다. 화면에 보이지 않는다.
+    Abandoned,
 }
 
 /// 등록된 방송 목록을 최신순으로 돌려준다.
@@ -74,6 +113,8 @@ enum Route {
     BroadcastList {},
     #[route("/new")]
     NewBroadcast {},
+    #[route("/live/new")]
+    NewLive {},
     /// 방송 번호는 글자로 받아 직접 읽는다. 번호가 아닌 주소도 "방송을 찾을 수 없습니다"로 보여 주기 위해서다.
     #[route("/broadcasts/:segment")]
     BroadcastDetail { segment: String },
@@ -97,7 +138,10 @@ fn Shell() -> Element {
     rsx! {
         header { class: "site-header",
             Link { class: "brand", to: Route::BroadcastList {}, "녹화방송" }
-            Link { class: "button", to: Route::NewBroadcast {}, "방송 등록" }
+            nav { class: "header-actions",
+                Link { class: "button live-button", to: Route::NewLive {}, "라이브 시작" }
+                Link { class: "button", to: Route::NewBroadcast {}, "녹화 올리기" }
+            }
         }
         main { Outlet::<Route> {} }
     }
@@ -112,7 +156,7 @@ fn BroadcastList() -> Element {
         Some(Ok(list)) if list.is_empty() => rsx! {
             section { class: "empty",
                 p { "아직 방송이 없습니다" }
-                Link { class: "button", to: Route::NewBroadcast {}, "방송 등록" }
+                Link { class: "button", to: Route::NewBroadcast {}, "녹화 올리기" }
             }
         },
         Some(Ok(list)) => rsx! {
@@ -132,14 +176,18 @@ fn BroadcastList() -> Element {
     view
 }
 
-/// 목록의 카드 하나: 썸네일 자리, 제목, 등록 시각.
+/// 목록의 카드 하나: 썸네일 자리와 종류 표시, 제목, 등록 시각.
 #[component]
 fn BroadcastCard(broadcast: Broadcast) -> Element {
     rsx! {
         article { class: "card",
             Link { class: "card-link", to: Route::BroadcastDetail { segment: broadcast.id.to_string() },
-                // 썸네일은 1단계에서 만들지 않으므로 회색 빈 칸을 둔다.
-                div { class: "thumbnail" }
+                // 썸네일은 만들지 않으므로 회색 빈 칸을 두고, 왼쪽 위에 방송 종류를 표시한다.
+                div { class: "thumbnail",
+                    if broadcast.kind == BroadcastKind::Recorded {
+                        span { class: "badge badge-recorded", "녹화" }
+                    }
+                }
                 h2 { class: "card-title", title: "{broadcast.title}", "{broadcast.title}" }
                 p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
             }
@@ -210,7 +258,19 @@ fn NotFound() -> Element {
     }
 }
 
-/// 방송 등록 화면: 제목과 MP4 파일을 받아 등록 API로 보낸다.
+/// 라이브 시작 화면. 송출 기능을 만들기 전까지는 준비 중 안내만 보여 준다.
+#[component]
+fn NewLive() -> Element {
+    rsx! {
+        h1 { "라이브 시작" }
+        section { class: "empty",
+            p { "라이브 방송은 준비 중입니다" }
+            Link { class: "button", to: Route::BroadcastList {}, "목록으로" }
+        }
+    }
+}
+
+/// 녹화 올리기 화면: 제목과 MP4 파일을 받아 등록 API로 보낸다.
 #[component]
 fn NewBroadcast() -> Element {
     let mut pending = use_signal(|| false);
@@ -240,7 +300,7 @@ fn NewBroadcast() -> Element {
     };
 
     rsx! {
-        h1 { "방송 등록" }
+        h1 { "녹화 올리기" }
         form { id: "register-form", class: "register-form", onsubmit: submit,
             label {
                 span { "제목" }

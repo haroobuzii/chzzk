@@ -18,12 +18,21 @@ pub async fn connect(
     Ok(pool)
 }
 
-/// 등록된 방송 목록. 최근에 등록한 방송이 먼저 온다.
+/// 조회 결과에 담는 칸.
+const COLUMNS: &str = "id, title, created_at, kind, status, started_at, ended_at";
+
+/// 화면에 보이는 방송만 고르는 조건. 준비·버려짐 라이브 방송은 없는 방송으로 취급한다.
+const VISIBLE: &str = "(status IS NULL OR status IN ('live', 'ended'))";
+
+/// 화면에 보이는 방송 목록. 최신 방송이 먼저 온다.
+/// 녹화 방송은 등록 시각, 라이브 방송은 시작 시각을 기준으로 한다.
 pub async fn list_broadcasts(pool: &PgPool) -> Result<Vec<Broadcast>, sqlx::Error> {
-    // 같은 시각에 등록된 방송은 번호가 큰(나중에 등록한) 쪽을 먼저 둔다.
-    sqlx::query_as("SELECT id, title, created_at FROM broadcasts ORDER BY created_at DESC, id DESC")
-        .fetch_all(pool)
-        .await
+    // 같은 시각의 방송은 번호가 큰(나중에 만든) 쪽을 먼저 둔다.
+    let sql = format!(
+        "SELECT {COLUMNS} FROM broadcasts WHERE {VISIBLE} \
+         ORDER BY COALESCE(started_at, created_at) DESC, id DESC"
+    );
+    sqlx::query_as(&sql).fetch_all(pool).await
 }
 
 /// 방송 정보를 넣고 새 방송 번호를 받는다. 영상 키는 번호로 지으므로 같은 트랜잭션에서 이어서 정한다.
@@ -46,17 +55,16 @@ pub async fn set_video_key(conn: &mut PgConnection, id: i64, key: &str) -> Resul
     Ok(())
 }
 
-/// 방송 번호로 방송 하나를 찾는다. 없으면 `None`.
+/// 방송 번호로 화면에 보이는 방송 하나를 찾는다. 없거나 준비·버려짐이면 `None`.
 pub async fn find_broadcast(pool: &PgPool, id: i64) -> Result<Option<Broadcast>, sqlx::Error> {
-    sqlx::query_as("SELECT id, title, created_at FROM broadcasts WHERE id = $1")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
+    let sql = format!("SELECT {COLUMNS} FROM broadcasts WHERE id = $1 AND {VISIBLE}");
+    sqlx::query_as(&sql).bind(id).fetch_optional(pool).await
 }
 
-/// 방송 번호로 영상 키(보관 폴더 기준 상대 위치)를 찾는다. 없으면 `None`.
+/// 방송 번호로 녹화 방송의 영상 키(보관 폴더 기준 상대 위치)를 찾는다.
+/// 없거나 라이브 방송이면 `None`.
 pub async fn find_video_key(pool: &PgPool, id: i64) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar("SELECT video_key FROM broadcasts WHERE id = $1")
+    sqlx::query_scalar("SELECT video_key FROM broadcasts WHERE id = $1 AND video_key IS NOT NULL")
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -66,11 +74,177 @@ pub async fn find_video_key(pool: &PgPool, id: i64) -> Result<Option<String>, sq
 /// `docker compose up -d`로 DB를 띄우고 `DATABASE_URL`을 설정한 뒤 실행한다.
 /// `#[sqlx::test]`는 테스트마다 빈 임시 DB를 만들고 마이그레이션을 적용한 뒤, 끝나면 지운다.
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod tests {
     use super::*;
+
+    use crate::{BroadcastKind, LiveStatus};
+    use chrono::{DateTime, TimeZone, Utc};
 
     #[sqlx::test]
     async fn 방송이_없으면_빈_목록이다(pool: PgPool) {
         assert_eq!(list_broadcasts(&pool).await.unwrap(), vec![]);
+    }
+
+    fn at(minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 11, 15, 12, minute, 0).unwrap()
+    }
+
+    /// 녹화 방송 한 줄을 DB에 직접 넣는다.
+    async fn insert_recorded(pool: &PgPool, title: &str, created_at: DateTime<Utc>) -> i64 {
+        sqlx::query_scalar(
+            "INSERT INTO broadcasts (title, video_key, created_at) VALUES ($1, 'videos/x.mp4', $2) RETURNING id",
+        )
+        .bind(title)
+        .bind(created_at)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// 라이브 방송 한 줄을 DB에 직접 넣는다. 아직 라이브 방송 저장소가 없어서다.
+    async fn insert_live(
+        pool: &PgPool,
+        status: &str,
+        started_at: Option<DateTime<Utc>>,
+        ended_at: Option<DateTime<Utc>>,
+    ) -> Result<i64, sqlx::Error> {
+        sqlx::query_scalar(
+            "INSERT INTO broadcasts (title, kind, status, stream_key_hash, started_at, ended_at)
+             VALUES ('라이브', 'live', $1::live_status, sha256('키'::bytea), $2, $3) RETURNING id",
+        )
+        .bind(status)
+        .bind(started_at)
+        .bind(ended_at)
+        .fetch_one(pool)
+        .await
+    }
+
+    #[sqlx::test]
+    async fn 기존_방식으로_넣은_방송은_녹화_방송이다(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        let id = insert_broadcast(&mut conn, "옛 방송").await.unwrap();
+        set_video_key(&mut conn, id, "videos/1.mp4").await.unwrap();
+
+        let found = find_broadcast(&pool, id).await.unwrap().unwrap();
+        assert_eq!(found.kind, BroadcastKind::Recorded);
+        assert_eq!(found.status, None);
+        assert_eq!(found.started_at, None);
+        assert_eq!(found.ended_at, None);
+    }
+
+    #[sqlx::test]
+    async fn 라이브_방송은_상태와_시작_종료_시각을_함께_돌려준다(
+        pool: PgPool,
+    ) {
+        let live = insert_live(&pool, "live", Some(at(10)), None)
+            .await
+            .unwrap();
+        let ended = insert_live(&pool, "ended", Some(at(1)), Some(at(5)))
+            .await
+            .unwrap();
+
+        let found = find_broadcast(&pool, live).await.unwrap().unwrap();
+        assert_eq!(found.kind, BroadcastKind::Live);
+        assert_eq!(found.status, Some(LiveStatus::Live));
+        assert_eq!(found.started_at, Some(at(10)));
+        assert_eq!(found.ended_at, None);
+
+        let found = find_broadcast(&pool, ended).await.unwrap().unwrap();
+        assert_eq!(found.status, Some(LiveStatus::Ended));
+        assert_eq!(found.started_at, Some(at(1)));
+        assert_eq!(found.ended_at, Some(at(5)));
+    }
+
+    #[sqlx::test]
+    async fn 준비와_버려짐_방송은_목록에_없고_단건_조회는_없음이다(
+        pool: PgPool,
+    ) {
+        let ready = insert_live(&pool, "ready", None, None).await.unwrap();
+        let abandoned = insert_live(&pool, "abandoned", None, None).await.unwrap();
+
+        assert_eq!(list_broadcasts(&pool).await.unwrap(), vec![]);
+        assert_eq!(find_broadcast(&pool, ready).await.unwrap(), None);
+        assert_eq!(find_broadcast(&pool, abandoned).await.unwrap(), None);
+    }
+
+    #[sqlx::test]
+    async fn 목록은_녹화는_등록_시각_라이브는_시작_시각으로_최신순이다(
+        pool: PgPool,
+    ) {
+        let old_recorded = insert_recorded(&pool, "옛 녹화", at(0)).await;
+        let ended = insert_live(&pool, "ended", Some(at(2)), Some(at(3)))
+            .await
+            .unwrap();
+        let new_recorded = insert_recorded(&pool, "새 녹화", at(4)).await;
+        let live = insert_live(&pool, "live", Some(at(6)), None).await.unwrap();
+
+        let ids: Vec<i64> = list_broadcasts(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .map(|b| b.id)
+            .collect();
+        assert_eq!(ids, vec![live, new_recorded, ended, old_recorded]);
+    }
+
+    #[sqlx::test]
+    async fn 라이브_방송에_영상_키가_있으면_DB가_거절한다(pool: PgPool) {
+        let result = sqlx::query(
+            "INSERT INTO broadcasts (title, kind, status, stream_key_hash, video_key)
+             VALUES ('라이브', 'live', 'ready', sha256('키'::bytea), 'videos/1.mp4')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            result.is_err(),
+            "영상 키가 있는 라이브 방송은 거절돼야 한다"
+        );
+    }
+
+    #[sqlx::test]
+    async fn 녹화_방송에_방송_상태가_있으면_DB가_거절한다(pool: PgPool) {
+        let result = sqlx::query(
+            "INSERT INTO broadcasts (title, video_key, status) VALUES ('녹화', 'videos/1.mp4', 'live')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            result.is_err(),
+            "방송 상태가 있는 녹화 방송은 거절돼야 한다"
+        );
+    }
+
+    #[sqlx::test]
+    async fn 라이브_방송에_송출_키_해시나_방송_상태가_없으면_DB가_거절한다(
+        pool: PgPool,
+    ) {
+        let no_hash = sqlx::query(
+            "INSERT INTO broadcasts (title, kind, status) VALUES ('라이브', 'live', 'ready')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            no_hash.is_err(),
+            "송출 키 해시가 없는 라이브 방송은 거절돼야 한다"
+        );
+
+        let no_status = sqlx::query(
+            "INSERT INTO broadcasts (title, kind, stream_key_hash) VALUES ('라이브', 'live', sha256('키'::bytea))",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            no_status.is_err(),
+            "방송 상태가 없는 라이브 방송은 거절돼야 한다"
+        );
+    }
+
+    #[sqlx::test]
+    async fn 방송_중인데_시작_시각이_없으면_DB가_거절한다(pool: PgPool) {
+        assert!(insert_live(&pool, "live", None, None).await.is_err());
+        assert!(insert_live(&pool, "ended", Some(at(1)), None)
+            .await
+            .is_err());
     }
 }
