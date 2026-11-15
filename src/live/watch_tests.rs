@@ -1,5 +1,4 @@
 //! 시청 연결(WHEP 중계) 테스트. `tests.rs`의 `LiveApp`과 요청 도우미를 쓴다.
-#![allow(non_snake_case)]
 
 use axum::{
     body::Body,

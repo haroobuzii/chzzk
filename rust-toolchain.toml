@@ -1,0 +1,7 @@
+# 이 저장소가 쓰는 Rust 버전. 내 컴퓨터, GitHub 자동 검사, 채점자가 모두 같은 버전으로 빌드한다.
+# rustup이 이 파일을 읽어 필요한 버전과 구성 요소를 설치한다.
+# 버전을 올릴 때는 이 줄만 바꾸고, 새 경고가 나오면 그때 정리한다.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt"]
+targets = ["wasm32-unknown-unknown"]

@@ -13,7 +13,6 @@ pub fn parse_number(segment: &str) -> Option<i64> {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
 

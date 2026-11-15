@@ -81,7 +81,6 @@ pub async fn find_video_key(pool: &PgPool, id: i64) -> Result<Option<String>, sq
 /// `docker compose up -d`로 DB를 띄우고 `DATABASE_URL`을 설정한 뒤 실행한다.
 /// `#[sqlx::test]`는 테스트마다 빈 임시 DB를 만들고 마이그레이션을 적용한 뒤, 끝나면 지운다.
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
 

@@ -43,7 +43,6 @@ pub fn validate_title(input: &str) -> Result<String, InvalidTitle> {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
 

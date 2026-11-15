@@ -69,7 +69,6 @@ pub fn broadcast_duration(started_at: DateTime<Utc>, ended_at: DateTime<Utc>) ->
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
     use crate::test_support::at;

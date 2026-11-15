@@ -34,9 +34,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      # rust-toolchain.toml에 적힌 버전을 그대로 설치한다. 버전은 그 파일 한 곳에서만 정한다.
+      - name: Rust 설치
+        run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
 

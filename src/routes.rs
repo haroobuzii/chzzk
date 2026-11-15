@@ -283,7 +283,6 @@ pub(crate) fn failure(status: StatusCode, code: &str, message: &str) -> Response
 /// 이 테스트들은 실제 PostgreSQL이 필요하다(`#[sqlx::test]`가 테스트마다 임시 DB를 만든다).
 /// 서버를 띄우지 않고 라우터에 요청을 직접 넣어 응답과 그 뒤의 조회 결과를 본다.
 #[cfg(test)]
-#[allow(non_snake_case)]
 pub(crate) mod tests {
     use super::*;
     use axum::body::{to_bytes, Body};

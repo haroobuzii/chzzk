@@ -123,13 +123,13 @@
 | `src/videos.rs` | 영상 보관(임시 파일, 최종 위치로 옮기기) |
 | `src/config.rs`, `src/server.rs` | 환경 변수 읽기, DB 접속, 라우터 조립, 상태 감시기 시작 |
 | `migrations/` | 표 만들기 SQL. 서버가 켜질 때 자동으로 적용한다. |
-| `docker-compose.yml`, `mediamtx/mediamtx.yml` | PostgreSQL과 MediaMTX. MediaMTX는 WebRTC와 관리 API만 켠다. |
+| `docker-compose.yml` | PostgreSQL과 MediaMTX. MediaMTX 설정도 이 파일의 `configs.mediamtx`에 있으며, WebRTC와 관리 API만 켠다. |
 
 설계 결정은 [docs/adr/](docs/adr/), 용어는 [GLOSSARY.md](GLOSSARY.md)에 있다.
 
 ## 실행 방법
 
-필요한 것: Rust(stable), [Dioxus CLI](https://dioxuslabs.com/learn/0.7/getting_started) 0.7, Docker, 라이브 송출을 해 볼 때는 `cloudflared`와 휴대폰
+필요한 것: Rust(rustup. 버전은 `rust-toolchain.toml`에 고정되어 있어 처음 빌드할 때 자동으로 설치된다), [Dioxus CLI](https://dioxuslabs.com/learn/0.7/getting_started) 0.7, Docker, 라이브 송출을 해 볼 때는 `cloudflared`와 휴대폰
 
 1. 환경 변수 파일을 만든다. 들어 있는 값은 로컬 개발용 예시다.
 
@@ -198,7 +198,7 @@ MEDIAMTX_API_URL=http://localhost:9997
 LAN_IP=192.168.0.10
 ```
 
-`.env.example`, `docker-compose.yml`, `mediamtx/mediamtx.yml`의 값은 모두 내 컴퓨터에서만 쓰는 개발용 값이다. 실제 비밀 값은 저장소에 없고, `.env`와 보관 폴더(`/data`)는 git에서 제외한다. 송출 키는 방송을 시작할 때마다 서버가 새로 만들며 저장소나 설정 파일에 들어가지 않는다.
+`.env.example`, `docker-compose.yml`의 값은 모두 내 컴퓨터에서만 쓰는 개발용 값이다. 실제 비밀 값은 저장소에 없고, `.env`와 보관 폴더(`/data`)는 git에서 제외한다. 송출 키는 방송을 시작할 때마다 서버가 새로 만들며 저장소나 설정 파일에 들어가지 않는다.
 
 ## 휴대폰 접속 환경 (라이브 송출)
 

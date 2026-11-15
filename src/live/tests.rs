@@ -3,7 +3,6 @@
 //! 실제 PostgreSQL(`#[sqlx::test]` 임시 DB)과 가짜 MediaMTX를 쓴다.
 //! 서버를 띄우지 않고 라우터에 요청을 직접 넣어 응답과 그 뒤의 조회 결과를 본다.
 //! 03·04·05 티켓의 테스트도 이 파일의 `LiveApp`과 요청 도우미를 쓴다.
-#![allow(non_snake_case)]
 
 use axum::{
     body::{to_bytes, Body},

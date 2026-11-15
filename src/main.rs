@@ -1,3 +1,7 @@
+// 테스트 함수 이름은 한국어 문장으로 쓴다(예: `제목과_MP4로_등록하면_201이다`).
+// 영어 대문자가 섞이면 Rust가 snake_case 경고를 내므로, 테스트 빌드에서만 이 경고를 끈다.
+#![cfg_attr(test, allow(non_snake_case))]
+
 use chrono::{DateTime, FixedOffset, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
