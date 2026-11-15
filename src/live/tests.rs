@@ -11,12 +11,13 @@ use axum::{
     response::Response,
     Router,
 };
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
 use super::fake_mediamtx::{FakeMediaMtx, FAKE_ANSWER, FAKE_SECRET, FAKE_SESSION_ID};
 use super::{api, LiveState};
+pub use crate::test_support::at;
 use crate::{BroadcastKind, LiveStatus};
 
 /// 테스트용 라이브 서버: 라우터와 DB, 가짜 MediaMTX.
@@ -60,7 +61,7 @@ impl LiveApp {
 
     /// 상태 감시기를 한 번 돌린다.
     pub async fn sync(&self, now: DateTime<Utc>) {
-        super::watcher::sync_once(&self.pool, &self.fake.client(), now)
+        super::status_sync::sync_once(&self.pool, &self.fake.client(), now)
             .await
             .unwrap();
     }
@@ -119,10 +120,6 @@ pub async fn body_text(response: Response) -> String {
 
 pub async fn body_json(response: Response) -> serde_json::Value {
     serde_json::from_str(&body_text(response).await).unwrap_or(serde_json::Value::Null)
-}
-
-pub fn at(second: u32) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, second).unwrap()
 }
 
 // ── 라이브 시작 ──
@@ -439,7 +436,7 @@ async fn MediaMTX에_닿지_못하면_맞추기는_실패하고_아무것도_바
     app.fake.set_online(&[&format!("live/{id}")]);
     app.fake.set_unreachable(true);
 
-    let result = super::watcher::sync_once(&app.pool, &app.fake.client(), at(5)).await;
+    let result = super::status_sync::sync_once(&app.pool, &app.fake.client(), at(5)).await;
 
     assert!(result.is_err());
     assert_eq!(

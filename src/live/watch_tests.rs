@@ -8,7 +8,8 @@ use axum::{
 use sqlx::PgPool;
 
 use super::fake_mediamtx::{FAKE_ANSWER, FAKE_SECRET};
-use super::tests::{at, body_json, body_text, session_request, LiveApp, OFFER};
+use super::tests::{at, body_json, body_text, end_request, session_request, LiveApp, OFFER};
+use crate::test_support::insert_recorded;
 
 /// 시청 연결 요청. 키가 필요 없다.
 fn whep_request(id: impl std::fmt::Display) -> Request<Body> {
@@ -43,14 +44,10 @@ async fn 방송_중이면_키_없이_offer가_넘어가고_answer와_우리_서�
     assert_eq!(sent[0].body, OFFER);
 }
 
-/// 방송을 종료 상태로 만든다. 종료 API는 04 티켓이 만들므로 DB를 직접 바꾼다.
-async fn end_in_db(app: &LiveApp, id: i64, now: chrono::DateTime<chrono::Utc>) {
-    sqlx::query("UPDATE broadcasts SET status = 'ended', ended_at = $2 WHERE id = $1")
-        .bind(id)
-        .bind(now)
-        .execute(&app.pool)
-        .await
-        .unwrap();
+/// 종료 API(`POST /api/live/{번호}/end`)로 방송을 끝낸다.
+async fn end_live(app: &LiveApp, id: i64, key: &str) {
+    let response = app.request(end_request(id, Some(key))).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
 #[sqlx::test]
@@ -59,8 +56,8 @@ async fn 준비나_종료된_방송을_시청하면_409이고_MediaMTX에_넘기
 ) {
     let app = LiveApp::new(pool).await;
     let (ready, _) = app.start_live("준비").await;
-    let (ended, _) = app.go_live("종료", at(0)).await;
-    end_in_db(&app, ended, at(30)).await;
+    let (ended, key) = app.go_live("종료", at(0)).await;
+    end_live(&app, ended, &key).await;
 
     for id in [ready, ended] {
         let response = app.request(whep_request(id)).await;
@@ -90,7 +87,7 @@ async fn 없는_번호나_녹화_방송을_시청하면_404다(pool: PgPool) {
 #[sqlx::test]
 async fn 시청_세션의_PATCH와_DELETE는_키_없이_넘어간다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, _) = app.go_live("세션", at(0)).await;
+    let (id, key) = app.go_live("세션", at(0)).await;
     let session = format!("/api/live/{id}/whep/{FAKE_SECRET}");
 
     let response = app
@@ -98,7 +95,7 @@ async fn 시청_세션의_PATCH와_DELETE는_키_없이_넘어간다(pool: PgPoo
         .await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     // 방송이 끝난 뒤에도 연결을 끊을 수 있다.
-    end_in_db(&app, id, at(30)).await;
+    end_live(&app, id, &key).await;
     let response = app
         .request(session_request(Method::DELETE, &session, None))
         .await;
@@ -139,18 +136,6 @@ async fn 시청_세션_주소가_이상하거나_없는_방송이면_넘기지_�
 
 // ── 목록 ──
 
-/// 녹화 방송 한 줄을 정한 등록 시각으로 넣는다.
-async fn insert_recorded(app: &LiveApp, title: &str, created_at: chrono::DateTime<chrono::Utc>) {
-    sqlx::query(
-        "INSERT INTO broadcasts (title, video_key, created_at) VALUES ($1, 'videos/x.mp4', $2)",
-    )
-    .bind(title)
-    .bind(created_at)
-    .execute(&app.pool)
-    .await
-    .unwrap();
-}
-
 #[sqlx::test]
 async fn 녹화_방송_중_종료가_섞인_목록이_최신순으로_표시와_시각을_갖는다(
     pool: PgPool,
@@ -158,10 +143,10 @@ async fn 녹화_방송_중_종료가_섞인_목록이_최신순으로_표시와_
     use crate::display::Mark;
 
     let app = LiveApp::new(pool).await;
-    insert_recorded(&app, "옛 녹화", at(1)).await;
-    let (ended, _) = app.go_live("끝난 라이브", at(10)).await;
-    end_in_db(&app, ended, at(20)).await;
-    insert_recorded(&app, "새 녹화", at(30)).await;
+    insert_recorded(&app.pool, "옛 녹화", at(1)).await;
+    let (ended, key) = app.go_live("끝난 라이브", at(10)).await;
+    end_live(&app, ended, &key).await;
+    insert_recorded(&app.pool, "새 녹화", at(30)).await;
     let (_live, _) = app.go_live("지금 라이브", at(40)).await;
     // 준비 상태는 목록에 나오지 않는다.
     app.start_live("준비").await;

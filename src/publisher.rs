@@ -7,7 +7,7 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 
-use crate::Route;
+use crate::{display::Mark, Route};
 
 /// 송출 화면의 단계.
 #[derive(Clone, Debug, PartialEq)]
@@ -66,12 +66,37 @@ impl Failure {
     }
 }
 
+/// 송출하는 동안 JavaScript가 스스로 알려 오는 일.
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PublisherEvent {
+    /// 송출 연결이 끊겼다. JavaScript가 이미 카메라를 끄고 종료 API를 불렀다.
+    ConnectionLost,
+    /// 화면 꺼짐 막기를 (다시) 걸었는지.
+    WakeLock { held: bool },
+}
+
+const CONNECTION_LOST: &str = "송출 연결이 끊겨 방송이 종료되었어요. 새 방송을 시작해 주세요.";
+
+impl PublisherEvent {
+    /// 연결이 끊긴 일을 화면 단계에 반영한다. 바뀔 단계와 띄울 안내를 돌려준다.
+    /// 송출 중이 아니면(이미 끝냈거나 끝내는 중이면) 아무것도 바꾸지 않는다.
+    fn apply(&self, phase: &Phase) -> Option<(Phase, &'static str)> {
+        match (self, phase) {
+            (PublisherEvent::ConnectionLost, Phase::Live { id }) => {
+                Some((Phase::Ended { id: *id }, CONNECTION_LOST))
+            }
+            _ => None,
+        }
+    }
+}
+
 #[component]
 pub fn NewLive() -> Element {
     let mut phase = use_signal(|| Phase::Preview);
     let mut error = use_signal(|| None::<String>);
     let mut title = use_signal(String::new);
-    // 송출 중에 화면 꺼짐 막기를 걸었는지. 못 걸었으면 "화면을 켜 두세요" 안내를 띄운다.
+    // 송출 중에 화면 꺼짐 막기를 걸고 있는지. 못 걸었거나 풀린 뒤 다시 못 걸면 "화면을 켜 두세요" 안내를 띄운다.
     let mut wake_lock = use_signal(|| true);
     // 시청자에게 알려 줄 상세 화면의 전체 주소.
     let mut detail_url = use_signal(String::new);
@@ -86,9 +111,28 @@ pub fn NewLive() -> Element {
             }
         });
     });
-    // 화면을 떠나면 연결을 닫고 카메라를 끈다.
+    // 송출하는 동안 JavaScript가 알려 오는 일(연결 끊김, 화면 꺼짐 막기)을 받는다.
+    use_effect(move || {
+        spawn(async move {
+            let mut events = document::eval(&format!(
+                "{PUBLISHER_JS}\nchzzkPublisher.listen((event) => dioxus.send(event));\nawait new Promise(() => {{}});"
+            ));
+            while let Ok(event) = events.recv::<PublisherEvent>().await {
+                if let PublisherEvent::WakeLock { held } = event {
+                    wake_lock.set(held);
+                    continue;
+                }
+                let current = phase.peek().clone();
+                if let Some((next, notice)) = event.apply(&current) {
+                    phase.set(next);
+                    error.set(Some(notice.to_string()));
+                }
+            }
+        });
+    });
+    // 화면을 떠나면(앱 안의 다른 화면으로 가도) 방송을 끝내고, 연결을 닫고 카메라를 끈다.
     use_drop(|| {
-        document::eval(&format!("{PUBLISHER_JS}\nchzzkPublisher.stop();"));
+        document::eval(&format!("{PUBLISHER_JS}\nchzzkPublisher.leave();"));
     });
 
     let start = move |event: FormEvent| {
@@ -102,11 +146,6 @@ pub fn NewLive() -> Element {
             let title_json = serde_json::to_string(&title()).unwrap_or_default();
             match run_for_id(&format!("return await chzzkPublisher.start({title_json});")).await {
                 Ok(id) => {
-                    wake_lock.set(
-                        ask::<bool>("chzzkPublisher.holdsWakeLock()")
-                            .await
-                            .unwrap_or(false),
-                    );
                     let origin = ask::<String>("location.origin").await.unwrap_or_default();
                     let path = Route::BroadcastDetail {
                         segment: id.to_string(),
@@ -174,7 +213,7 @@ pub fn NewLive() -> Element {
                     playsinline: true,
                 }
                 if let Phase::Live { .. } = phase() {
-                    span { class: "badge badge-live", "LIVE" }
+                    span { class: "badge {Mark::Live.class()}", "{Mark::Live.label()}" }
                 }
             }
             // 끝내는 중이거나 끝난 뒤에는 카메라가 꺼져 있으므로 전환 버튼을 감춘다.
@@ -213,7 +252,7 @@ pub fn NewLive() -> Element {
                 },
                 Phase::Ended { id } => rsx! {
                     p { class: "publisher-status", role: "status", "방송을 종료했습니다" }
-                    Link { class: "back-link", to: Route::BroadcastDetail { segment: id.to_string() }, "내 방송 보기 →" }
+                    Link { class: "back-link", to: Route::BroadcastDetail { segment: id.to_string() }, "시청 화면 열기 →" }
                 },
                 _ => rsx! {
                     form { class: "register-form", onsubmit: start,
@@ -303,19 +342,32 @@ async fn run_for_id(body: &str) -> Result<i64, String> {
 /// - `preview()`: 후면 카메라 1280×720과 마이크를 켜고 미리보기에 띄운다.
 /// - `start(title)`: 시작 API → RTCPeerConnection(sendonly) → ICE 수집 완료 → WHIP 송출 → 연결 확인. 방송 번호를 돌려준다.
 /// - `stop()`: 연결을 닫고 카메라·마이크를 끈다.
-/// - `end()`: 종료 API를 부른 뒤 `stop()`한다. 화면을 떠날 때(pagehide)는 keepalive 요청으로 종료를 시도한다.
+/// - `end()`: 종료 API를 부른 뒤 `stop()`한다.
+/// - `leave()`: 송출 화면을 떠날 때(앱 안의 이동) keepalive 요청으로 종료를 시도하고 `stop()`한다.
+///   탭을 닫거나 다른 사이트로 갈 때(pagehide)도 같은 요청을 보낸다.
 /// - `switchCamera()`: 전면·후면 카메라를 바꾼다. 송출 중이면 보내는 영상 트랙만 바꿔 끼워 연결은 그대로 둔다.
-/// - `holdsWakeLock()`: 화면 꺼짐 막기(Screen Wake Lock)를 걸고 있는지 알려 준다.
+/// - `listen(callback)`: 송출 중에 생기는 일을 `callback`으로 알린다.
+///   `{ kind: "connection_lost" }`(연결이 끊겨 종료 API를 부르고 카메라를 껐다),
+///   `{ kind: "wake_lock", held }`(화면 꺼짐 막기를 걸었는지. 걸 때마다, 다시 걸 때마다 알린다).
 /// - `describe(error)`: 에러를 `{ code }`(브라우저에서 생긴 실패) 또는 `{ message }`(서버가 준 문구)로 바꾼다.
 ///   코드를 한국어 안내로 바꾸는 일은 Rust 쪽 `Failure::message`가 한다.
 ///
-/// 상태(`stream`, `pc`, `video`, `id`, `key`, `session`)는 객체 안에 둔다. 송출 키는 여기에만 있다.
+/// 상태(`stream`, `pc`, `id`, `key`, `session`, `listener` 등)는 객체 안에 둔다. 송출 키는 여기에만 있다.
 const PUBLISHER_JS: &str = r#"
 window.chzzkPublisher ??= (() => {
   const state = {
     stream: null, pc: null, video: null, id: null, key: null, session: null, facing: "environment",
-    videoSender: null, wakeLock: null, wantWakeLock: false,
+    videoSender: null, wakeLock: null, wantWakeLock: false, listener: null,
   };
+
+  // 화면(Rust 쪽)에 알린다. 화면이 이미 사라졌으면 조용히 넘어간다.
+  function emit(event) {
+    try { state.listener?.(event); } catch {}
+  }
+
+  function listen(callback) {
+    state.listener = callback;
+  }
 
   class PublisherError extends Error {
     constructor(message, code) {
@@ -422,6 +474,30 @@ window.chzzkPublisher ??= (() => {
     state.session = res.headers.get("Location");
     await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
     await waitConnected(pc);
+    watchConnection(pc);
+  }
+
+  // 송출 중에 연결이 끊기면 방송을 끝낸다. disconnected는 잠깐 끊겼다 돌아오기도 하므로 10초 기다린다.
+  function watchConnection(pc) {
+    let timer = null;
+    pc.addEventListener("connectionstatechange", () => {
+      if (state.pc !== pc) return;
+      clearTimeout(timer);
+      const s = pc.connectionState;
+      if (s === "failed" || s === "closed") connectionLost();
+      else if (s === "disconnected") {
+        timer = setTimeout(() => {
+          if (state.pc === pc && pc.connectionState === "disconnected") connectionLost();
+        }, 10000);
+      }
+    });
+  }
+
+  function connectionLost() {
+    if (state.id == null) return;
+    requestEnd(false);
+    stop();
+    emit({ kind: "connection_lost" });
   }
 
   async function start(title) {
@@ -447,15 +523,22 @@ window.chzzkPublisher ??= (() => {
   }
 
   // 송출하는 동안 화면이 꺼지지 않게 한다. 지원하지 않거나 거절되면 그냥 넘어가고,
-  // 화면은 `holdsWakeLock()`이 false인 것을 보고 "화면을 켜 두세요" 안내를 띄운다.
+  // 걸었는지를 화면에 알려 못 걸었으면 "화면을 켜 두세요" 안내를 띄우게 한다.
   async function holdWakeLock() {
-    if (!state.wantWakeLock || !navigator.wakeLock) return;
-    if (state.wakeLock && !state.wakeLock.released) return;
-    try {
-      state.wakeLock = await navigator.wakeLock.request("screen");
-    } catch {
-      state.wakeLock = null;
+    if (!state.wantWakeLock) return;
+    if (!holdsWakeLock() && navigator.wakeLock) {
+      try {
+        const lock = await navigator.wakeLock.request("screen");
+        state.wakeLock = lock;
+        // 브라우저가 풀면 화면이 보이는 동안에는 바로 다시 건다. 숨어 있으면 돌아올 때(visibilitychange) 건다.
+        lock.addEventListener("release", () => {
+          if (state.wakeLock === lock && document.visibilityState === "visible") holdWakeLock();
+        });
+      } catch {
+        state.wakeLock = null;
+      }
     }
+    if (state.wantWakeLock) emit({ kind: "wake_lock", held: holdsWakeLock() });
   }
 
   function releaseWakeLock() {
@@ -547,7 +630,15 @@ window.chzzkPublisher ??= (() => {
     stop();
   }
 
-  // 송출 화면을 떠날 때(탭 닫기, 다른 사이트로 이동)도 종료를 시도한다. 페이지가 사라져도 요청이 가도록 keepalive를 쓴다.
+  // 송출 화면을 떠날 때 종료를 시도한다. 페이지가 사라져도 요청이 가도록 keepalive를 쓴다.
+  // 앱 안에서 다른 화면으로 가면 Rust 쪽이 `leave()`를 부른다.
+  function leave() {
+    state.listener = null;
+    requestEnd(true);
+    stop();
+  }
+
+  // 탭을 닫거나 다른 사이트로 갈 때.
   window.addEventListener("pagehide", () => {
     requestEnd(true);
   });
@@ -560,7 +651,7 @@ window.chzzkPublisher ??= (() => {
     return { code: "unknown" };
   }
 
-  return { state, preview, start, stop, end, switchCamera, holdsWakeLock, describe };
+  return { state, preview, start, stop, end, leave, switchCamera, listen, describe };
 })();
 "#;
 
@@ -610,6 +701,38 @@ mod tests {
     fn 서버가_준_문구는_그대로_보여_준다() {
         let message = error(r#"{"kind":"error","message":"제목을 입력해 주세요."}"#);
         assert_eq!(message, "제목을 입력해 주세요.");
+    }
+
+    #[test]
+    fn 송출_중_연결이_끊기면_방송이_끝난_화면으로_바뀌고_끊겼다고_알린다() {
+        let event: PublisherEvent = serde_json::from_str(r#"{"kind":"connection_lost"}"#).unwrap();
+        let (phase, notice) = event.apply(&Phase::Live { id: 3 }).unwrap();
+        assert_eq!(phase, Phase::Ended { id: 3 });
+        assert!(notice.contains("송출 연결이 끊겨"), "{notice}");
+        assert!(notice.contains("종료"), "{notice}");
+    }
+
+    #[test]
+    fn 송출_중이_아닐_때_연결이_끊긴_소식은_무시한다() {
+        let event: PublisherEvent = serde_json::from_str(r#"{"kind":"connection_lost"}"#).unwrap();
+        for phase in [
+            Phase::Preview,
+            Phase::Connecting,
+            Phase::Ending { id: 3 },
+            Phase::Ended { id: 3 },
+        ] {
+            assert!(event.apply(&phase).is_none(), "{phase:?}");
+        }
+    }
+
+    #[test]
+    fn 화면_꺼짐_막기를_다시_못_걸면_화면을_켜_두라고_한다() {
+        let lost: PublisherEvent =
+            serde_json::from_str(r#"{"kind":"wake_lock","held":false}"#).unwrap();
+        assert_eq!(lost, PublisherEvent::WakeLock { held: false });
+        let held: PublisherEvent =
+            serde_json::from_str(r#"{"kind":"wake_lock","held":true}"#).unwrap();
+        assert_eq!(held, PublisherEvent::WakeLock { held: true });
     }
 
     #[test]

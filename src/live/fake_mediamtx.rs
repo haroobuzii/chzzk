@@ -38,7 +38,7 @@ pub const FAKE_SESSION_ID: &str = "9a1b2c3d-0000-4000-8000-000000001234";
 
 /// 가짜가 받은 요청 하나.
 #[derive(Clone, Debug)]
-pub struct Recorded {
+pub struct CapturedRequest {
     pub method: Method,
     /// 쿼리를 뺀 경로. 예: `/live/1/whip`
     pub path: String,
@@ -48,7 +48,7 @@ pub struct Recorded {
 
 #[derive(Default)]
 struct Inner {
-    requests: Vec<Recorded>,
+    requests: Vec<CapturedRequest>,
     online: Vec<String>,
     unreachable: bool,
 }
@@ -77,12 +77,12 @@ impl FakeMediaMtx {
     }
 
     /// 지금까지 받은 요청 전부.
-    pub fn requests(&self) -> Vec<Recorded> {
+    pub fn requests(&self) -> Vec<CapturedRequest> {
         self.inner.lock().unwrap().requests.clone()
     }
 
     /// 관리 API가 아닌 WHIP/WHEP 요청만.
-    pub fn webrtc_requests(&self) -> Vec<Recorded> {
+    pub fn webrtc_requests(&self) -> Vec<CapturedRequest> {
         self.requests()
             .into_iter()
             .filter(|r| !r.path.starts_with("/v3/"))
@@ -109,7 +109,7 @@ async fn handle(
 ) -> Response {
     let path = uri.path().to_string();
     let mut inner = inner.lock().unwrap();
-    inner.requests.push(Recorded {
+    inner.requests.push(CapturedRequest {
         method: method.clone(),
         path: path.clone(),
         headers,

@@ -5,9 +5,9 @@
 
 pub mod key;
 pub mod mediamtx;
+pub mod status_sync;
 pub mod store;
 pub mod watch;
-pub mod watcher;
 
 #[cfg(test)]
 pub mod fake_mediamtx;
@@ -84,15 +84,21 @@ async fn end(
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// `POST /api/live`의 본문. 제목이 없으면 빈 제목으로 보고 제목 검사가 거절한다.
+#[derive(serde::Deserialize)]
+struct StartLive {
+    #[serde(default)]
+    title: String,
+}
+
 /// `POST /api/live`: JSON `{title}`로 라이브 방송을 준비 상태로 만든다.
 ///
 /// 성공하면 201과 `{id, key}`를 준다. 송출 키 원문은 이 응답에만 담기고 DB에는 해시만 남는다.
 async fn start(State(state): State<LiveState>, body: Bytes) -> Response {
-    let Ok(input) = serde_json::from_slice::<serde_json::Value>(&body) else {
+    let Ok(input) = serde_json::from_slice::<StartLive>(&body) else {
         return bad_request("bad_request", "요청을 읽지 못했어요. 다시 시도해 주세요.");
     };
-    let raw_title = input["title"].as_str().unwrap_or("");
-    let title = match validate_title(raw_title) {
+    let title = match validate_title(&input.title) {
         Ok(title) => title,
         Err(e) => return bad_request(e.code(), e.message()),
     };
@@ -132,35 +138,7 @@ async fn publish(
         );
     }
 
-    let path = format!("/{}/whip", mediamtx::path_of(id));
-    let forwarded = forward(
-        &state,
-        Method::POST,
-        &path,
-        &headers,
-        &[header::CONTENT_TYPE],
-        body,
-    )
-    .await;
-    let upstream = match forwarded {
-        Ok(upstream) if upstream.status() == reqwest::StatusCode::CREATED => upstream,
-        Ok(upstream) => return mediamtx_failed(&format!("{} 응답", upstream.status())),
-        Err(e) => return mediamtx_failed(&e.to_string()),
-    };
-
-    let mut response = relay_headers(&upstream, &[header::CONTENT_TYPE, header::ETAG]);
-    if let Some(secret) = upstream
-        .headers()
-        .get(header::LOCATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(session_from_location)
-    {
-        let location = format!("/api/live/{id}/whip/{secret}");
-        if let Ok(value) = HeaderValue::from_str(&location) {
-            response.headers_mut().insert(header::LOCATION, value);
-        }
-    }
-    finish(response, upstream).await
+    relay_offer(&state, id, Relay::Whip, &headers, body).await
 }
 
 /// `PATCH`·`DELETE /api/live/{번호}/whip/{세션}`: 송출 키를 확인한 뒤 송출 세션 요청을 MediaMTX에 넘긴다.
@@ -180,25 +158,11 @@ async fn publish_session(
         Ok((id, _)) => id,
         Err(response) => return response,
     };
-
-    let path = format!("/{}/whip/{session}", mediamtx::path_of(id));
-    let pass = [header::CONTENT_TYPE, header::IF_MATCH];
-    let upstream = match forward(&state, method, &path, &headers, &pass, body).await {
-        Ok(upstream) => upstream,
-        Err(e) => return mediamtx_failed(&e.to_string()),
-    };
-    let response = relay_headers(&upstream, &[header::CONTENT_TYPE, header::ETAG]);
-    finish(response, upstream).await
+    relay_session(&state, id, Relay::Whip, &session, method, &headers, body).await
 }
 
-/// 방송 번호와 송출 키를 확인한다.
-///
-/// 번호가 아니거나 라이브 방송이 없으면 404, 키가 없거나 틀리면 401이다.
-async fn authorize(
-    state: &LiveState,
-    segment: &str,
-    headers: &HeaderMap,
-) -> Result<(i64, LiveAccess), Response> {
+/// 방송 번호로 라이브 방송을 찾는다. 번호가 아니거나 라이브 방송이 없으면 404, DB 실패는 500이다.
+async fn find_live(state: &LiveState, segment: &str) -> Result<(i64, LiveAccess), Response> {
     let id = parse_number(segment).ok_or_else(not_found)?;
     let access = store::find_access(&state.pool, id)
         .await
@@ -211,7 +175,18 @@ async fn authorize(
             )
         })?
         .ok_or_else(not_found)?;
+    Ok((id, access))
+}
 
+/// 방송 번호와 송출 키를 확인한다.
+///
+/// 번호가 아니거나 라이브 방송이 없으면 404, 키가 없거나 틀리면 401이다.
+async fn authorize(
+    state: &LiveState,
+    segment: &str,
+    headers: &HeaderMap,
+) -> Result<(i64, LiveAccess), Response> {
+    let (id, access) = find_live(state, segment).await?;
     let given = bearer(headers).unwrap_or("");
     if given.is_empty() || !key::matches(given, &access.stream_key_hash) {
         return Err(failure(
@@ -247,6 +222,84 @@ fn session_from_location(location: &str) -> Option<&str> {
     let without_query = location.split('?').next()?;
     let secret = without_query.rsplit('/').next()?;
     is_session_id(secret).then_some(secret)
+}
+
+/// 중계하는 WebRTC 요청의 종류: 송출(WHIP) 또는 시청(WHEP). 주소의 한 마디로 쓰인다.
+#[derive(Clone, Copy)]
+enum Relay {
+    Whip,
+    Whep,
+}
+
+impl Relay {
+    fn name(self) -> &'static str {
+        match self {
+            Relay::Whip => "whip",
+            Relay::Whep => "whep",
+        }
+    }
+}
+
+/// 확인을 마친 방송 `id`의 SDP offer를 MediaMTX에 넘기고 answer를 돌려준다.
+///
+/// `Location`(세션 주소)은 우리 서버의 `/api/live/{번호}/{whip|whep}/{세션}`으로 바꾼다.
+async fn relay_offer(
+    state: &LiveState,
+    id: i64,
+    relay: Relay,
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Response {
+    let kind = relay.name();
+    let path = format!("/{}/{kind}", mediamtx::path_of(id));
+    let forwarded = forward(
+        state,
+        Method::POST,
+        &path,
+        headers,
+        &[header::CONTENT_TYPE],
+        body,
+    )
+    .await;
+    let upstream = match forwarded {
+        Ok(upstream) if upstream.status() == reqwest::StatusCode::CREATED => upstream,
+        Ok(upstream) => return mediamtx_failed(&format!("{} 응답", upstream.status())),
+        Err(e) => return mediamtx_failed(&e.to_string()),
+    };
+
+    let mut response = relay_headers(&upstream, &[header::CONTENT_TYPE, header::ETAG]);
+    if let Some(secret) = upstream
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(session_from_location)
+    {
+        let location = format!("/api/live/{id}/{kind}/{secret}");
+        if let Ok(value) = HeaderValue::from_str(&location) {
+            response.headers_mut().insert(header::LOCATION, value);
+        }
+    }
+    finish(response, upstream).await
+}
+
+/// 확인을 마친 방송 `id`의 세션 요청(PATCH·DELETE)을 MediaMTX에 넘긴다. `session`은 이미 모양을 확인했다.
+async fn relay_session(
+    state: &LiveState,
+    id: i64,
+    relay: Relay,
+    session: &str,
+    method: Method,
+    headers: &HeaderMap,
+    body: Bytes,
+) -> Response {
+    let path = format!("/{}/{}/{session}", mediamtx::path_of(id), relay.name());
+    let pass = [header::CONTENT_TYPE, header::IF_MATCH];
+    let upstream = match forward(state, method, &path, headers, &pass, body).await {
+        Ok(upstream) => upstream,
+        Err(e) => return mediamtx_failed(&e.to_string()),
+    };
+    let response = relay_headers(&upstream, &[header::CONTENT_TYPE, header::ETAG]);
+    finish(response, upstream).await
 }
 
 /// 요청 헤더 중 `pass`에 있는 것만 담아 MediaMTX에 넘긴다. 송출 키는 넘기지 않는다.

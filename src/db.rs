@@ -2,17 +2,24 @@
 //!
 //! 1단계에는 인증이 없으므로 수정·삭제 함수는 일부러 두지 않는다.
 
-use sqlx::postgres::{PgConnection, PgPool, PgPoolOptions};
+use std::str::FromStr;
+
+use sqlx::postgres::{PgConnectOptions, PgConnection, PgPool, PgPoolOptions};
+use sqlx::ConnectOptions;
 
 use crate::Broadcast;
 
 /// DB에 접속하고, 아직 적용하지 않은 마이그레이션(표 만들기 등)을 적용한다.
+///
+/// 실행한 SQL 문장은 debug로만 남긴다. 상태 감시기가 2초마다 묻는 문장이 서버 로그를 덮지 않게 하기 위해서다.
+/// 느린 문장 경고와 실패는 그대로 보인다.
 pub async fn connect(
     database_url: &str,
 ) -> Result<PgPool, Box<dyn std::error::Error + Send + Sync>> {
+    let options = PgConnectOptions::from_str(database_url)?.log_statements(log::LevelFilter::Debug);
     let pool = PgPoolOptions::new()
         .max_connections(10)
-        .connect(database_url)
+        .connect_with(options)
         .await?;
     sqlx::migrate!().run(&pool).await?;
     Ok(pool)
@@ -78,31 +85,17 @@ pub async fn find_video_key(pool: &PgPool, id: i64) -> Result<Option<String>, sq
 mod tests {
     use super::*;
 
+    use crate::test_support::{at, insert_recorded};
     use crate::{BroadcastKind, LiveStatus};
-    use chrono::{DateTime, TimeZone, Utc};
+    use chrono::{DateTime, Utc};
 
     #[sqlx::test]
     async fn 방송이_없으면_빈_목록이다(pool: PgPool) {
         assert_eq!(list_broadcasts(&pool).await.unwrap(), vec![]);
     }
 
-    fn at(minute: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 11, 15, 12, minute, 0).unwrap()
-    }
-
-    /// 녹화 방송 한 줄을 DB에 직접 넣는다.
-    async fn insert_recorded(pool: &PgPool, title: &str, created_at: DateTime<Utc>) -> i64 {
-        sqlx::query_scalar(
-            "INSERT INTO broadcasts (title, video_key, created_at) VALUES ($1, 'videos/x.mp4', $2) RETURNING id",
-        )
-        .bind(title)
-        .bind(created_at)
-        .fetch_one(pool)
-        .await
-        .unwrap()
-    }
-
-    /// 라이브 방송 한 줄을 DB에 직접 넣는다. 아직 라이브 방송 저장소가 없어서다.
+    /// 라이브 방송 한 줄을 DB에 직접 넣는다. 상태와 시각을 마음대로 정하려고(제약 조건 검사 포함)
+    /// 라이브 방송 저장소(`live::store`)를 거치지 않는다.
     async fn insert_live(
         pool: &PgPool,
         status: &str,

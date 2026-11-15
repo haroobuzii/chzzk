@@ -15,6 +15,26 @@ pub enum Mark {
     Ended,
 }
 
+impl Mark {
+    /// 표시에 쓰는 글자.
+    pub fn label(self) -> &'static str {
+        match self {
+            Mark::Recorded => "녹화",
+            Mark::Live => "LIVE",
+            Mark::Ended => "종료",
+        }
+    }
+
+    /// 표시 색을 정하는 CSS 클래스. 모양(`badge`, `inline-badge`)은 쓰는 쪽이 붙인다.
+    pub fn class(self) -> &'static str {
+        match self {
+            Mark::Recorded => "badge-recorded",
+            Mark::Live => "badge-live",
+            Mark::Ended => "badge-ended",
+        }
+    }
+}
+
 impl Broadcast {
     /// 카드에 붙일 표시.
     pub fn mark(&self) -> Mark {
@@ -36,7 +56,7 @@ impl Broadcast {
 }
 
 /// 방송한 시간을 "12분 34초"처럼 쓴다. 한 시간이 넘으면 "1시간 2분 3초"다.
-pub fn on_air_duration(started_at: DateTime<Utc>, ended_at: DateTime<Utc>) -> String {
+pub fn broadcast_duration(started_at: DateTime<Utc>, ended_at: DateTime<Utc>) -> String {
     let total = (ended_at - started_at).num_seconds().max(0);
     let (hours, minutes, seconds) = (total / 3600, total % 3600 / 60, total % 60);
     if hours > 0 {
@@ -52,11 +72,8 @@ pub fn on_air_duration(started_at: DateTime<Utc>, ended_at: DateTime<Utc>) -> St
 #[allow(non_snake_case)]
 mod tests {
     use super::*;
+    use crate::test_support::at;
     use chrono::TimeZone;
-
-    fn at(minute: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 11, 15, 12, minute, 0).unwrap()
-    }
 
     fn live(status: LiveStatus, started: Option<u32>, ended: Option<u32>) -> Broadcast {
         Broadcast {
@@ -111,9 +128,9 @@ mod tests {
         ];
         for (seconds, expected) in cases {
             let end = start + chrono::Duration::seconds(seconds);
-            assert_eq!(on_air_duration(start, end), expected, "{seconds}초");
+            assert_eq!(broadcast_duration(start, end), expected, "{seconds}초");
         }
         // 시각이 거꾸로면 0초로 본다.
-        assert_eq!(on_air_duration(at(5), at(1)), "0초");
+        assert_eq!(broadcast_duration(at(5), at(1)), "0초");
     }
 }

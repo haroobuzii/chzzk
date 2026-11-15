@@ -11,10 +11,13 @@ mod display;
 mod live;
 mod number;
 mod publisher;
+mod refresh;
 #[cfg(feature = "server")]
 mod routes;
 #[cfg(feature = "server")]
 mod server;
+#[cfg(test)]
+mod test_support;
 #[cfg(feature = "server")]
 mod title;
 #[cfg(feature = "server")]
@@ -23,7 +26,8 @@ mod viewer;
 
 use display::Mark;
 use publisher::NewLive;
-use viewer::{sleep_ms, LiveDetail, REFRESH_MS};
+use refresh::{sleep_ms, REFRESH_MS};
+use viewer::LiveDetail;
 
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
@@ -200,18 +204,18 @@ fn BroadcastList() -> Element {
             }
         };
     }
-    let on_air: Vec<Broadcast> = list
+    let live_now: Vec<Broadcast> = list
         .iter()
         .filter(|b| b.mark() == Mark::Live)
         .cloned()
         .collect();
     rsx! {
         // 방송 중인 방송이 없으면 이 칸은 보이지 않는다.
-        if !on_air.is_empty() {
+        if !live_now.is_empty() {
             section { class: "live-now",
                 h2 { class: "section-title", "지금 라이브" }
                 ul { class: "broadcast-grid",
-                    for broadcast in on_air {
+                    for broadcast in live_now {
                         li { key: "{broadcast.id}", BroadcastCard { broadcast } }
                     }
                 }
@@ -234,17 +238,13 @@ fn BroadcastList() -> Element {
 /// 시각은 녹화는 등록 시각, 라이브는 시작 시각이다.
 #[component]
 fn BroadcastCard(broadcast: Broadcast) -> Element {
-    let (badge_class, badge) = match broadcast.mark() {
-        Mark::Recorded => ("badge badge-recorded", "녹화"),
-        Mark::Live => ("badge badge-live", "LIVE"),
-        Mark::Ended => ("badge badge-ended", "종료"),
-    };
+    let mark = broadcast.mark();
     rsx! {
         article { class: "card",
             Link { class: "card-link", to: Route::BroadcastDetail { segment: broadcast.id.to_string() },
                 // 썸네일은 만들지 않으므로 회색 빈 칸을 두고, 왼쪽 위에 표시를 붙인다.
                 div { class: "thumbnail",
-                    span { class: badge_class, "{badge}" }
+                    span { class: "badge {mark.class()}", "{mark.label()}" }
                 }
                 h2 { class: "card-title", title: "{broadcast.title}", "{broadcast.title}" }
                 p { class: "card-time", "{format_kst(&broadcast.shown_time())}" }

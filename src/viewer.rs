@@ -6,17 +6,9 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 
-use crate::display::{on_air_duration, Mark};
+use crate::display::{broadcast_duration, Mark};
+use crate::refresh::{sleep_ms, REFRESH_MS};
 use crate::{format_kst, get_broadcast, Broadcast, Route};
-
-/// 상태를 다시 확인하는 간격.
-pub const REFRESH_MS: u32 = 5000;
-
-/// 브라우저에서 `ms`밀리초 기다린다.
-pub async fn sleep_ms(ms: u32) {
-    let mut wait = document::eval(&format!("setTimeout(() => dioxus.send(true), {ms});"));
-    let _ = wait.recv::<bool>().await;
-}
 
 /// 라이브 방송 상세: 방송 중이면 시청 화면, 종료면 종료 안내.
 #[component]
@@ -40,7 +32,7 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
     });
 
     let broadcast = current();
-    let started_at = broadcast.shown_time();
+    let shown_time = broadcast.shown_time();
     rsx! {
         article { class: "detail",
             if broadcast.mark() == Mark::Live {
@@ -54,13 +46,13 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
             }
             h1 { class: "detail-title",
                 if broadcast.mark() == Mark::Live {
-                    span { class: "inline-badge badge-live", "LIVE" }
+                    span { class: "inline-badge {Mark::Live.class()}", "{Mark::Live.label()}" }
                 }
                 "{broadcast.title}"
             }
-            p { class: "card-time", "시작 {format_kst(&started_at)}" }
+            p { class: "card-time", "시작 {format_kst(&shown_time)}" }
             if let Some(ended_at) = broadcast.ended_at {
-                p { class: "card-time", "방송한 시간 {on_air_duration(started_at, ended_at)}" }
+                p { class: "card-time", "방송한 시간 {broadcast_duration(shown_time, ended_at)}" }
             }
             Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
         }

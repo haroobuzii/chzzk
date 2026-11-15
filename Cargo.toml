@@ -10,6 +10,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 dioxus = { version = "0.7.10", features = ["fullstack", "router"] }
 dotenvy = { version = "0.15", optional = true }
 hex = { version = "0.4", optional = true }
+log = { version = "0.4", optional = true }
 rand = { version = "0.8", optional = true }
 reqwest = { version = "0.12", default-features = false, optional = true }
 serde = { version = "1", features = ["derive"] }
@@ -24,7 +25,7 @@ tower-http = { version = "0.6", features = ["fs"], optional = true }
 [features]
 default = ["web"]
 web = ["dioxus/web"]
-server = ["dioxus/server", "dep:sqlx", "dep:anyhow", "dep:dotenvy", "dep:axum", "dep:tempfile", "dep:tokio", "dep:tower", "dep:tower-http", "dep:hex", "dep:rand", "dep:reqwest", "dep:sha2"]
+server = ["dioxus/server", "dep:sqlx", "dep:anyhow", "dep:dotenvy", "dep:axum", "dep:tempfile", "dep:tokio", "dep:tower", "dep:tower-http", "dep:hex", "dep:log", "dep:rand", "dep:reqwest", "dep:sha2"]
 
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
