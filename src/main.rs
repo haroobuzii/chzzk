@@ -6,7 +6,6 @@ use chrono::{DateTime, FixedOffset, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-mod account;
 #[cfg(feature = "server")]
 mod auth;
 mod comments;
@@ -17,6 +16,7 @@ mod db;
 mod display;
 #[cfg(feature = "server")]
 mod live;
+mod login;
 mod manage;
 mod number;
 mod publisher;
@@ -33,9 +33,9 @@ mod title;
 mod videos;
 mod viewer;
 
-use account::{HeaderLogin, Login, RequireLogin, Signup};
 use comments::CommentSection;
 use display::Mark;
+use login::{HeaderLogin, Login, RequireLogin, Signup};
 use manage::OwnerActions;
 use publisher::NewLive;
 use refresh::{sleep_ms, REFRESH_MS};
@@ -164,7 +164,7 @@ use route::Route;
 
 #[component]
 fn App() -> Element {
-    account::provide_login_state();
+    login::provide_login_state();
     rsx! {
         document::Title { "녹화방송" }
         document::Meta { name: "viewport", content: "width=device-width, initial-scale=1" }

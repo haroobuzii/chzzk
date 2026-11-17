@@ -317,6 +317,18 @@ async fn 없는_번호로_송출하면_404다(pool: PgPool) {
 }
 
 #[sqlx::test]
+async fn 비로그인이면_없는_번호로_송출하거나_끝내도_401이다(pool: PgPool) {
+    let app = LiveApp::new(pool).await;
+
+    for request in [whip_request(9999), end_request(9999)] {
+        let path = request.uri().to_string();
+        let response = app.request_as(&Persona::anonymous(), request).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+    assert!(app.fake.requests().is_empty());
+}
+
+#[sqlx::test]
 async fn 녹화_방송_번호로_송출하면_404다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
     app.start_live("라이브").await;

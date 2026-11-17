@@ -83,14 +83,7 @@ async fn video(
     let key = match crate::db::find_video_key(&state.pool, id).await {
         Ok(Some(key)) => key,
         Ok(None) => return not_found(),
-        Err(e) => {
-            dioxus::logger::tracing::error!("영상 위치 조회 실패: {e}");
-            return failure(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "영상을 불러오지 못했어요.",
-            );
-        }
+        Err(e) => return server_error("영상 위치 조회", e, "영상을 불러오지 못했어요."),
     };
 
     // Range 처리는 검증된 구현(tower-http)에 맡긴다. 확장자가 .mp4라서 Content-Type은 video/mp4가 된다.
@@ -160,14 +153,9 @@ async fn try_register(
         return Err(bad_request("missing_video", "영상 파일을 골라 주세요."));
     };
 
-    save(state, owner, &title, upload).await.map_err(|e| {
-        dioxus::logger::tracing::error!("방송 등록 실패: {e}");
-        failure(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            "등록하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-        )
-    })
+    save(state, owner, &title, upload)
+        .await
+        .map_err(|e| server_error("방송 등록", e, "등록하지 못했어요."))
 }
 
 /// 제목 칸으로 받을 최대 바이트. 100자 × 한 글자 최대 4바이트에 앞뒤 공백 여유를 더한 값이다.
@@ -206,8 +194,8 @@ async fn receive_video(
         return Err(not_mp4());
     }
 
-    let temp = state.videos.create_temp().map_err(server_error)?;
-    let mut file = tokio::fs::File::from_std(temp.as_file().try_clone().map_err(server_error)?);
+    let temp = state.videos.create_temp().map_err(video_save_error)?;
+    let mut file = tokio::fs::File::from_std(temp.as_file().try_clone().map_err(video_save_error)?);
     let mut received: u64 = 0;
     // 표시를 확인할 앞부분 8바이트. 조각이 작게 나뉘어 와도 모아서 본다.
     let mut head = Vec::with_capacity(8);
@@ -228,13 +216,13 @@ async fn receive_video(
             let take = (8 - head.len()).min(chunk.len());
             head.extend_from_slice(&chunk[..take]);
         }
-        file.write_all(&chunk).await.map_err(server_error)?;
+        file.write_all(&chunk).await.map_err(video_save_error)?;
     }
 
     if head.len() < 8 || &head[4..8] != MP4_SIGNATURE {
         return Err(not_mp4());
     }
-    file.flush().await.map_err(server_error)?;
+    file.flush().await.map_err(video_save_error)?;
     Ok(temp)
 }
 
@@ -293,18 +281,24 @@ fn broken_upload() -> Response {
     )
 }
 
-fn server_error(e: std::io::Error) -> Response {
-    dioxus::logger::tracing::error!("영상 저장 실패: {e}");
-    failure(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "server_error",
-        "영상을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-    )
+fn video_save_error(e: std::io::Error) -> Response {
+    server_error("영상 저장", e, "영상을 저장하지 못했어요.")
 }
 
 /// 실패 응답: 상태 코드와 원인 코드, 한국어 메시지.
 pub(crate) fn failure(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({ "code": code, "message": message }))).into_response()
+}
+
+/// 서버 쪽 실패(DB·파일 등)의 500 응답. `{what} 실패: {e}`를 로그에 남기고,
+/// 사용자에게는 `message`(예: "방송을 지우지 못했어요.")에 다시 시도하라는 말을 붙여 보낸다.
+pub(crate) fn server_error(what: &str, e: impl std::fmt::Display, message: &str) -> Response {
+    dioxus::logger::tracing::error!("{what} 실패: {e}");
+    failure(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "server_error",
+        &format!("{message} 잠시 뒤 다시 시도해 주세요."),
+    )
 }
 
 /// 이 테스트들은 실제 PostgreSQL이 필요하다(`#[sqlx::test]`가 테스트마다 임시 DB를 만든다).

@@ -32,7 +32,7 @@ mod server {
         auth::CurrentUser,
         live::{self, mediamtx::MediaMtx},
         number::parse_number,
-        routes::{bad_request, failure, not_found},
+        routes::{bad_request, not_found, server_error},
         title::validate_title,
         videos::VideoStore,
         LiveStatus,
@@ -147,14 +147,5 @@ mod server {
         };
         user.require_owner(broadcast.owner_id)?;
         Ok((id, broadcast))
-    }
-
-    fn server_error(action: &str, e: sqlx::Error, message: &str) -> Response {
-        dioxus::logger::tracing::error!("{action} 실패: {e}");
-        failure(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            &format!("{message} 잠시 뒤 다시 시도해 주세요."),
-        )
     }
 }

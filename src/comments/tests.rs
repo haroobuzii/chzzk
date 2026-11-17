@@ -182,6 +182,8 @@ async fn 목록은_누구나_오래된_순으로_보고_mine은_작성자에게�
 async fn 종료된_라이브_방송에도_댓글을_쓴다(pool: PgPool) {
     let router = router(&pool);
     let a = Persona::user_a(&pool).await;
+    // 이 라우터에는 라이브 API(시작·송출·종료)가 없고, 종료까지 가려면 가짜 MediaMTX도 띄워야 한다.
+    // 여기서 보려는 것은 댓글 쪽뿐이므로 끝난 라이브 방송 행을 DB에 바로 넣는다.
     let ended: i64 = sqlx::query_scalar(
         "INSERT INTO broadcasts (title, kind, status, started_at, ended_at)
          VALUES ('끝난 라이브', 'live', 'ended', now(), now()) RETURNING id",
@@ -237,6 +239,8 @@ async fn 방송_행을_지우면_그_방송의_댓글도_사라진다(pool: PgPo
     let comment = json["id"].as_i64().unwrap();
     write(&router, &a, kept, "남을 댓글").await;
 
+    // 보려는 것은 DB의 연쇄 삭제(ON DELETE CASCADE)다. 공개 API(DELETE /api/broadcasts/{번호})는
+    // 소유자가 필요하고 영상 파일까지 지우므로, 방송 행만 DB에서 바로 지운다.
     sqlx::query("DELETE FROM broadcasts WHERE id = $1")
         .bind(gone)
         .execute(&pool)

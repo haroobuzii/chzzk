@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 use serde_json::json;
 
 use super::Comment;
-use crate::account::{call_api, use_login_state, LoginState};
+use crate::login::{call_api, use_login_state, LoginState};
 use crate::refresh::{sleep_ms, COMMENT_REFRESH_MS};
 use crate::{format_kst, Route};
 
@@ -27,13 +27,17 @@ pub fn CommentSection(broadcast_id: ReadSignal<i64>, live: ReadSignal<bool>) -> 
     // 방송이 바뀌거나 로그인 상태가 바뀌면(`mine`이 달라진다) 다시 불러온다.
     use_effect(move || {
         let id = broadcast_id();
-        let _ = login();
+        // 값은 쓰지 않는다. 읽어 두어야 로그인 상태가 바뀔 때 이 effect가 다시 돈다.
+        let _login_state_dependency = login();
         spawn(load(id, comments));
     });
 
     // 방송 중인 동안 3초마다 다시 불러온다. 방송이 끝나면 멈춘다.
+    // `live`가 꺼졌다 바로 켜지면 앞 반복이 아직 자는 중일 수 있다. 그 반복이 계속 돌므로 새로 띄우지 않는다.
+    let mut polling = use_signal(|| false);
     use_effect(move || {
-        if live() {
+        if live() && !*polling.peek() {
+            polling.set(true);
             spawn(async move {
                 while *live.peek() {
                     sleep_ms(COMMENT_REFRESH_MS).await;
@@ -41,6 +45,7 @@ pub fn CommentSection(broadcast_id: ReadSignal<i64>, live: ReadSignal<bool>) -> 
                         load(*broadcast_id.peek(), comments).await;
                     }
                 }
+                polling.set(false);
             });
         }
     });

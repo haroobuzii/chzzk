@@ -1,4 +1,4 @@
-//! 계정과 로그인: 회원가입, 로그인·로그아웃, 현재 사용자 확인(ADR 0006).
+//! 사용자와 로그인: 회원가입, 로그인·로그아웃, 현재 사용자 확인(ADR 0006).
 //!
 //! 로그인 상태는 DB의 세션과 `HttpOnly` 쿠키로 유지한다. 쿠키에는 세션 값 원문이, DB에는 그 해시가 있다.
 
@@ -26,13 +26,13 @@ use sqlx::PgPool;
 pub use current_user::{forbidden, CurrentUser, User};
 pub use origin::guard_origin;
 
-use crate::routes::{bad_request, failure};
-use rules::{validate_password, validate_username};
+use crate::routes::{self, bad_request, failure};
+use rules::{validate_password, validate_username, PASSWORD_MAX_CHARS};
 
 /// 세션 쿠키 이름.
 pub const SESSION_COOKIE: &str = "chzzk_session";
 
-/// 계정 API 라우터.
+/// 로그인 API 라우터(회원가입·로그인·로그아웃·현재 사용자).
 pub fn api(pool: PgPool) -> Router {
     Router::new()
         .route("/api/auth/signup", post(signup))
@@ -79,7 +79,7 @@ async fn signup(
                 "이미 쓰는 아이디예요.",
             )
         }
-        Err(e) => return server_error("회원가입", e.into()),
+        Err(e) => return server_error("회원가입", e),
     };
     start_session(&pool, &headers, user, StatusCode::CREATED).await
 }
@@ -87,6 +87,7 @@ async fn signup(
 /// `POST /api/auth/login`: 아이디와 비밀번호가 맞으면 200과 세션 쿠키, `{username}`.
 ///
 /// 없는 아이디와 틀린 비밀번호는 둘 다 401이고 같은 메시지다.
+/// 가입 규칙보다 긴 비밀번호는 맞을 수 없으므로 해시를 계산하지 않고 같은 401을 준다.
 async fn login(
     State(pool): State<PgPool>,
     headers: HeaderMap,
@@ -95,22 +96,29 @@ async fn login(
     let Ok(Json(credentials)) = body else {
         return invalid_body();
     };
+    if credentials.password.chars().count() > PASSWORD_MAX_CHARS {
+        return bad_credentials();
+    }
     match store::check_credentials(&pool, &credentials.username, &credentials.password).await {
         Ok(Some(user)) => start_session(&pool, &headers, user, StatusCode::OK).await,
-        Ok(None) => failure(
-            StatusCode::UNAUTHORIZED,
-            "bad_credentials",
-            "아이디 또는 비밀번호가 맞지 않아요.",
-        ),
+        Ok(None) => bad_credentials(),
         Err(e) => server_error("로그인", e),
     }
+}
+
+fn bad_credentials() -> Response {
+    failure(
+        StatusCode::UNAUTHORIZED,
+        "bad_credentials",
+        "아이디 또는 비밀번호가 맞지 않아요.",
+    )
 }
 
 /// `POST /api/auth/logout`: 세션을 지우고 쿠키를 만료시킨다. 로그인하지 않았어도 204다.
 async fn logout(State(pool): State<PgPool>, headers: HeaderMap) -> Response {
     if let Some(token) = current_user::session_token(&headers) {
         if let Err(e) = store::delete_session(&pool, &token).await {
-            return server_error("로그아웃", e.into());
+            return server_error("로그아웃", e);
         }
     }
     (
@@ -135,7 +143,7 @@ async fn start_session(
 ) -> Response {
     let token = match store::create_session(pool, user.id, chrono::Utc::now()).await {
         Ok(token) => token,
-        Err(e) => return server_error("로그인 세션 만들기", e.into()),
+        Err(e) => return server_error("로그인 세션 만들기", e),
     };
     let max_age = store::SESSION_DAYS * 24 * 60 * 60;
     (
@@ -162,11 +170,6 @@ fn invalid_body() -> Response {
     bad_request("invalid_body", "아이디와 비밀번호를 보내 주세요.")
 }
 
-fn server_error(what: &str, e: anyhow::Error) -> Response {
-    dioxus::logger::tracing::error!("{what} 실패: {e}");
-    failure(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "server_error",
-        "요청을 처리하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-    )
+fn server_error(what: &str, e: impl std::fmt::Display) -> Response {
+    routes::server_error(what, e, "요청을 처리하지 못했어요.")
 }

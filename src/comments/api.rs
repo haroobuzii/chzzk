@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use super::{rules::validate_body, store, Comment};
 use crate::auth::{forbidden, CurrentUser};
 use crate::number::parse_number;
-use crate::routes::{bad_request, failure, not_found};
+use crate::routes::{self, bad_request, failure, not_found};
 
 /// 댓글 API 라우터.
 pub fn api(pool: PgPool) -> Router {
@@ -133,10 +133,5 @@ fn comment_not_found() -> Response {
 }
 
 fn server_error(what: &str, e: sqlx::Error) -> Response {
-    dioxus::logger::tracing::error!("{what} 실패: {e}");
-    failure(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "server_error",
-        "요청을 처리하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-    )
+    routes::server_error(what, e, "요청을 처리하지 못했어요.")
 }

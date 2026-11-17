@@ -3,8 +3,9 @@
 /// 아이디 글자 수 범위.
 pub const USERNAME_MIN_CHARS: usize = 2;
 pub const USERNAME_MAX_CHARS: usize = 20;
-/// 비밀번호 최소 글자 수.
+/// 비밀번호 글자 수 범위. 최대가 있는 까닭은 아주 긴 비밀번호의 해시 계산에 서버가 묶이지 않게 하기 위해서다.
 pub const PASSWORD_MIN_CHARS: usize = 8;
+pub const PASSWORD_MAX_CHARS: usize = 128;
 
 /// 규칙에 어긋난 입력. 실패 응답의 원인 코드와 한국어 메시지를 준다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +14,8 @@ pub enum InvalidCredentials {
     Username,
     /// 비밀번호가 8자보다 짧다.
     PasswordTooShort,
+    /// 비밀번호가 128자보다 길다.
+    PasswordTooLong,
 }
 
 impl InvalidCredentials {
@@ -20,6 +23,7 @@ impl InvalidCredentials {
         match self {
             Self::Username => "invalid_username",
             Self::PasswordTooShort => "password_too_short",
+            Self::PasswordTooLong => "password_too_long",
         }
     }
 
@@ -27,6 +31,7 @@ impl InvalidCredentials {
         match self {
             Self::Username => "아이디는 2~20자의 한글, 영문, 숫자, 밑줄(_)로 지어 주세요.",
             Self::PasswordTooShort => "비밀번호는 8자 이상으로 지어 주세요.",
+            Self::PasswordTooLong => "비밀번호는 128자 이하로 지어 주세요.",
         }
     }
 }
@@ -51,10 +56,13 @@ fn is_hangul_syllable(c: char) -> bool {
 
 /// 비밀번호가 규칙에 맞는지 본다. 글자 수는 바이트가 아니라 글자로 센다.
 pub fn validate_password(password: &str) -> Result<(), InvalidCredentials> {
-    if password.chars().count() >= PASSWORD_MIN_CHARS {
-        Ok(())
-    } else {
+    let length = password.chars().count();
+    if length < PASSWORD_MIN_CHARS {
         Err(InvalidCredentials::PasswordTooShort)
+    } else if length > PASSWORD_MAX_CHARS {
+        Err(InvalidCredentials::PasswordTooLong)
+    } else {
+        Ok(())
     }
 }
 

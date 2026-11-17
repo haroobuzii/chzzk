@@ -29,7 +29,7 @@ use sqlx::PgPool;
 use crate::{
     auth::CurrentUser,
     number::parse_number,
-    routes::{bad_request, failure, not_found},
+    routes::{bad_request, failure, not_found, server_error},
     title::validate_title,
     LiveStatus,
 };
@@ -78,12 +78,7 @@ async fn end(
         Err(response) => return response,
     };
     if let Err(e) = store::end(&state.pool, id, chrono::Utc::now()).await {
-        dioxus::logger::tracing::error!("라이브 방송 종료 실패: {e}");
-        return failure(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            "방송을 끝내지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-        );
+        return server_error("라이브 방송 종료", e, "방송을 끝내지 못했어요.");
     }
     if let Err(e) = state.mediamtx.kick_publisher(id).await {
         dioxus::logger::tracing::warn!("송출 세션 끊기 실패(무시): {e:#}");
@@ -117,14 +112,7 @@ async fn start(State(state): State<LiveState>, current: CurrentUser, body: Bytes
 
     match store::create(&state.pool, owner.id, &title).await {
         Ok(id) => (StatusCode::CREATED, Json(json!({ "id": id }))).into_response(),
-        Err(e) => {
-            dioxus::logger::tracing::error!("라이브 방송 시작 실패: {e}");
-            failure(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "방송을 시작하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-            )
-        }
+        Err(e) => server_error("라이브 방송 시작", e, "방송을 시작하지 못했어요."),
     }
 }
 
@@ -164,44 +152,42 @@ async fn publish_session(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !is_session_id(&session) {
-        return not_found();
-    }
     let id = match authorize(&state, &segment, current).await {
         Ok((id, _)) => id,
         Err(response) => return response,
     };
+    if !is_session_id(&session) {
+        return not_found();
+    }
     relay_session(&state, id, Relay::Whip, &session, method, &headers, body).await
 }
 
-/// 방송 번호로 라이브 방송을 찾는다. 번호가 아니거나 라이브 방송이 없으면 404, DB 실패는 500이다.
-async fn find_live(state: &LiveState, segment: &str) -> Result<(i64, LiveAccess), Response> {
-    let id = parse_number(segment).ok_or_else(not_found)?;
-    let access = store::find_access(&state.pool, id)
-        .await
-        .map_err(|e| {
-            dioxus::logger::tracing::error!("라이브 방송 조회 실패: {e}");
-            failure(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "방송을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-            )
-        })?
-        .ok_or_else(not_found)?;
-    Ok((id, access))
-}
-
-/// 방송 번호와 소유자를 확인한다.
+/// 로그인 → 라이브 방송 찾기 → 소유자 확인을 차례로 한다(방송 관리와 같은 순서).
 ///
-/// 번호가 아니거나 라이브 방송이 없으면 404, 비로그인이면 401, 소유자가 아니면 403이다.
+/// 비로그인이면 401, 번호가 아니거나 라이브 방송이 없으면 404, 소유자가 아니면 403, DB 실패는 500이다.
 async fn authorize(
     state: &LiveState,
     segment: &str,
     current: CurrentUser,
 ) -> Result<(i64, LiveAccess), Response> {
+    let user = current.require()?;
     let (id, access) = find_live(state, segment).await?;
-    current.require()?.require_owner(access.owner_id)?;
+    user.require_owner(access.owner_id)?;
     Ok((id, access))
+}
+
+/// 방송 번호로 라이브 방송을 찾는다. 번호가 아니거나 라이브 방송이 없으면 404, DB 실패는 500이다.
+async fn find_live(state: &LiveState, segment: &str) -> Result<(i64, LiveAccess), Response> {
+    let id = parse_number(segment).ok_or_else(not_found)?;
+    match store::find_access(&state.pool, id).await {
+        Ok(Some(access)) => Ok((id, access)),
+        Ok(None) => Err(not_found()),
+        Err(e) => Err(server_error(
+            "라이브 방송 조회",
+            e,
+            "방송을 불러오지 못했어요.",
+        )),
+    }
 }
 
 /// MediaMTX의 세션 비밀값 모양(UUID)인지 본다. 그 밖의 값은 MediaMTX의 다른 주소로 새지 않게 막는다.
