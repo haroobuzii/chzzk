@@ -233,7 +233,7 @@ async fn relay_offer(
     body: Bytes,
 ) -> Response {
     let kind = relay.name();
-    let path = format!("/{}/{kind}", mediamtx::path_of(id));
+    let path = format!("/{}/{kind}", state.mediamtx.path_of(id));
     let forwarded = forward(
         state,
         Method::POST,
@@ -274,7 +274,7 @@ async fn relay_session(
     headers: &HeaderMap,
     body: Bytes,
 ) -> Response {
-    let path = format!("/{}/{}/{session}", mediamtx::path_of(id), relay.name());
+    let path = format!("/{}/{}/{session}", state.mediamtx.path_of(id), relay.name());
     let pass = [header::CONTENT_TYPE, header::IF_MATCH];
     let upstream = match forward(state, method, &path, headers, &pass, body).await {
         Ok(upstream) => upstream,

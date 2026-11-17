@@ -25,7 +25,11 @@ pub async fn router() -> anyhow::Result<Router> {
         let pool = crate::db::connect(&config.database_url)
             .await
             .map_err(|e| anyhow!("DB에 접속하지 못했습니다: {e}"))?;
-        let mediamtx = MediaMtx::new(&config.mediamtx_webrtc_url, &config.mediamtx_api_url);
+        let mediamtx = MediaMtx::with_path_prefix(
+            &config.mediamtx_webrtc_url,
+            &config.mediamtx_api_url,
+            &config.live_path_prefix,
+        );
         // 상태 감시기는 한 번만 띄운다. 켜지자마자 한 번 맞추므로, 꺼진 동안 바뀐 상태도 바로 맞춰진다.
         crate::live::status_sync::spawn(pool.clone(), mediamtx.clone());
         let _ = CONFIG.set(config);

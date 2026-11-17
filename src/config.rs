@@ -19,10 +19,13 @@ pub struct Config {
     pub mediamtx_webrtc_url: String,
     /// MediaMTX의 관리 API 주소. 기본 `http://localhost:9997`.
     pub mediamtx_api_url: String,
+    /// MediaMTX 경로 앞부분. 기본 `live`. 작업 폴더마다 다르게 두면 MediaMTX를 함께 써도 방송이 섞이지 않는다.
+    pub live_path_prefix: String,
 }
 
 impl Config {
-    /// `DATABASE_URL`, `DATA_DIR`, `MAX_UPLOAD_BYTES`, `MEDIAMTX_WEBRTC_URL`, `MEDIAMTX_API_URL`을 읽는다.
+    /// `DATABASE_URL`, `DATA_DIR`, `MAX_UPLOAD_BYTES`, `MEDIAMTX_WEBRTC_URL`, `MEDIAMTX_API_URL`,
+    /// `LIVE_PATH_PREFIX`를 읽는다.
     /// 비어 있거나 없는 값은 기본값을 쓴다(`DATABASE_URL` 제외).
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = read("DATABASE_URL").context("DATABASE_URL 환경 변수가 필요합니다")?;
@@ -33,6 +36,13 @@ impl Config {
                 format!("MAX_UPLOAD_BYTES는 바이트 단위 숫자여야 합니다: {value}")
             })?,
         };
+        let live_path_prefix = read("LIVE_PATH_PREFIX")
+            .unwrap_or_else(|| crate::live::mediamtx::DEFAULT_PATH_PREFIX.into());
+        if !crate::live::mediamtx::is_valid_path_prefix(&live_path_prefix) {
+            anyhow::bail!(
+                "LIVE_PATH_PREFIX는 영문 소문자, 숫자, -, _만 쓸 수 있습니다: {live_path_prefix}"
+            );
+        }
         Ok(Self {
             database_url,
             data_dir,
@@ -41,6 +51,7 @@ impl Config {
                 .unwrap_or_else(|| "http://localhost:8889".into()),
             mediamtx_api_url: read("MEDIAMTX_API_URL")
                 .unwrap_or_else(|| "http://localhost:9997".into()),
+            live_path_prefix,
         })
     }
 }

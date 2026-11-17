@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use super::{mediamtx, mediamtx::MediaMtx, store};
+use super::{mediamtx::MediaMtx, store};
 
 /// 맞추는 간격.
 pub const INTERVAL: Duration = Duration::from_secs(2);
@@ -32,7 +32,7 @@ pub async fn sync_once(
     now: DateTime<Utc>,
 ) -> anyhow::Result<()> {
     let online = mediamtx.online_paths().await?;
-    let online_ids: Vec<i64> = online.iter().filter_map(|p| mediamtx::id_of(p)).collect();
+    let online_ids: Vec<i64> = online.iter().filter_map(|p| mediamtx.id_of(p)).collect();
     store::mark_live(pool, &online_ids, now).await?;
     store::end_missing(pool, &online_ids, now).await?;
     store::abandon_stale(pool, now - READY_TIMEOUT, now).await?;

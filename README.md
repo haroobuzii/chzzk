@@ -275,6 +275,7 @@
 | `MAX_UPLOAD_BYTES` | 아니요 | 기본 `2147483648` (2 GiB) | 업로드 최대 크기(바이트) |
 | `MEDIAMTX_WEBRTC_URL` | 아니요 | 기본 `http://localhost:8889` | 우리 서버가 송출·시청 연결 요청(WHIP/WHEP)을 넘길 MediaMTX 주소 |
 | `MEDIAMTX_API_URL` | 아니요 | 기본 `http://localhost:9997` | 상태 감시기가 "지금 영상이 들어오는 경로" 목록을 읽을 MediaMTX 관리 API 주소 |
+| `LIVE_PATH_PREFIX` | 아니요 | 기본 `live` | MediaMTX 경로 앞부분(방송 3번 → `live/3`). 개발할 때 여러 작업 폴더가 MediaMTX 하나를 함께 쓸 때만 바꾼다. |
 | `LAN_IP` | 예 (`docker compose`) | `192.168.0.10` | 이 컴퓨터의 와이파이 IP. 앱이 아니라 `docker compose`가 읽어 MediaMTX에 넘긴다(`MTX_WEBRTCADDITIONALHOSTS`). Docker 컨테이너 안에서는 컴퓨터의 와이파이 IP가 보이지 않기 때문이다. |
 | `IP`, `PORT` | 아니요 | Dioxus 기본값 | 서버가 받을 주소와 포트 |
 
@@ -605,7 +606,7 @@ RUSTFLAGS="-D warnings" DATABASE_URL=postgres://chzzk:chzzk@localhost:5433/chzzk
 
 ### 결과 (2026-11-17, 3단계)
 
-- `cargo test`: 148개 모두 통과 (`RUSTFLAGS="-D warnings"`로 실행). 1·2단계 테스트를 포함한다.
+- `cargo test`: 151개 모두 통과 (`RUSTFLAGS="-D warnings"`로 실행). 1·2단계 테스트를 포함한다. `step-3` 태그 시점에는 148개였고, 그 뒤 회고에서 MediaMTX 경로 앞부분 단위 테스트 3개를 더했다.
 - `curl`: 빈 DB로 띄운 앱에 위 "화면을 거치지 않는 요청으로 확인"의 명령을 그대로 실행해, 적힌 응답과 상태 코드(가입 201, 비로그인 401, 다른 사용자 403, 다른 사이트 `Origin` 403, 소유자 200·204, 로그아웃 뒤 401)가 나오는 것을 확인했다.
 - 직접 확인 (3단계, 컴퓨터 브라우저)
   - 구현 중에 두 사용자를 `localhost`(소유자)와 `127.0.0.1`(다른 사용자)로 나눠 브라우저로 확인했다. 라이브 송출은 브라우저의 가짜 카메라 장치나 ffmpeg의 WHIP 송출로 대신했다.

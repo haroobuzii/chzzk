@@ -50,4 +50,8 @@ jobs:
         run: cargo check --no-default-features --features server
 
       - name: 테스트
-        run: cargo test --no-default-features --features server
+        run: cargo test --no-default-features --features server 2>&1 | tee test-output.txt
+
+      # README에 적은 최신 테스트 개수가 실제 통과 개수와 같은지 본다.
+      - name: README 테스트 개수
+        run: scripts/check-readme-test-count.sh test-output.txt

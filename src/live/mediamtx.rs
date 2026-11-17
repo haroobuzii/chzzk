@@ -1,6 +1,7 @@
 //! MediaMTX 연결: WHIP/WHEP 요청을 MediaMTX에 넘기고, 관리 API로 지금 영상이 들어오는 경로를 읽는다.
 //!
-//! 라이브 방송 하나는 MediaMTX 경로 `live/<방송 번호>` 하나다.
+//! 라이브 방송 하나는 MediaMTX 경로 `<앞부분>/<방송 번호>` 하나다. 앞부분은 기본 `live`이고,
+//! `LIVE_PATH_PREFIX`로 바꿀 수 있다. MediaMTX 하나를 여러 작업 폴더가 함께 쓸 때 경로가 겹치지 않게 하기 위해서다.
 
 use std::collections::HashSet;
 
@@ -15,27 +16,48 @@ pub struct MediaMtx {
     webrtc_url: String,
     /// 관리 API 주소. 예: `http://localhost:9997`
     api_url: String,
+    /// 경로 앞부분. 기본 `live`.
+    path_prefix: String,
     http: reqwest::Client,
 }
 
-/// 방송 번호에 해당하는 MediaMTX 경로.
-pub fn path_of(id: i64) -> String {
-    format!("live/{id}")
-}
+/// 경로 앞부분 기본값.
+pub const DEFAULT_PATH_PREFIX: &str = "live";
 
-/// MediaMTX 경로에서 방송 번호를 읽는다. `live/<번호>` 모양이 아니면 `None`.
-pub fn id_of(path: &str) -> Option<i64> {
-    let number = path.strip_prefix("live/")?;
-    crate::number::parse_number(number)
+/// 경로 앞부분으로 쓸 수 있는지 본다. 영문 소문자, 숫자, `-`, `_`만 받는다.
+pub fn is_valid_path_prefix(prefix: &str) -> bool {
+    !prefix.is_empty()
+        && prefix
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
 impl MediaMtx {
+    /// 기본 경로 앞부분(`live`)을 쓰는 연결.
     pub fn new(webrtc_url: &str, api_url: &str) -> Self {
+        Self::with_path_prefix(webrtc_url, api_url, DEFAULT_PATH_PREFIX)
+    }
+
+    /// 경로 앞부분을 정한 연결. 앞부분은 `is_valid_path_prefix`를 통과한 값이어야 한다.
+    pub fn with_path_prefix(webrtc_url: &str, api_url: &str, path_prefix: &str) -> Self {
         Self {
             webrtc_url: webrtc_url.trim_end_matches('/').to_string(),
             api_url: api_url.trim_end_matches('/').to_string(),
+            path_prefix: path_prefix.to_string(),
             http: reqwest::Client::new(),
         }
+    }
+
+    /// 방송 번호에 해당하는 MediaMTX 경로. 예: `live/3`
+    pub fn path_of(&self, id: i64) -> String {
+        format!("{}/{id}", self.path_prefix)
+    }
+
+    /// MediaMTX 경로에서 방송 번호를 읽는다. 이 연결의 앞부분으로 시작하지 않으면 `None`.
+    /// 그래서 다른 작업 폴더가 쓰는 경로(예: `live-t33/2`)는 내 방송으로 읽지 않는다.
+    pub fn id_of(&self, path: &str) -> Option<i64> {
+        let number = path.strip_prefix(&self.path_prefix)?.strip_prefix('/')?;
+        crate::number::parse_number(number)
     }
 
     /// WebRTC HTTP 주소의 `path`(예: `/live/3/whip`)로 요청을 그대로 넘긴다.
@@ -69,7 +91,7 @@ impl MediaMtx {
 
     /// 방송 번호 `id`의 경로에 연결된 송출 세션을 강제로 끊는다. 송출자가 없으면 아무것도 하지 않는다.
     pub async fn kick_publisher(&self, id: i64) -> anyhow::Result<()> {
-        let name = path_of(id);
+        let name = self.path_of(id);
         let sessions: Vec<String> = self
             .paths()
             .await?
@@ -155,4 +177,40 @@ struct ApiSource {
     kind: String,
     /// 세션 번호. 강제 종료 API에 쓴다.
     id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with(prefix: &str) -> MediaMtx {
+        MediaMtx::with_path_prefix("http://x", "http://y", prefix)
+    }
+
+    #[test]
+    fn 기본_앞부분은_live다() {
+        let mediamtx = MediaMtx::new("http://x", "http://y");
+        assert_eq!(mediamtx.path_of(3), "live/3");
+        assert_eq!(mediamtx.id_of("live/3"), Some(3));
+    }
+
+    #[test]
+    fn 다른_앞부분의_경로는_내_방송으로_읽지_않는다() {
+        let mine = with("live-t33");
+        assert_eq!(mine.path_of(2), "live-t33/2");
+        assert_eq!(mine.id_of("live-t33/2"), Some(2));
+        assert_eq!(mine.id_of("live/2"), None);
+        assert_eq!(with("live").id_of("live-t33/2"), None);
+        assert_eq!(with("live").id_of("live/abc"), None);
+    }
+
+    #[test]
+    fn 앞부분은_소문자_숫자_하이픈_밑줄만_받는다() {
+        for ok in ["live", "live-t33", "live_2"] {
+            assert!(is_valid_path_prefix(ok), "{ok}");
+        }
+        for bad in ["", "Live", "live/x", "live t", "../x", "라이브"] {
+            assert!(!is_valid_path_prefix(bad), "{bad:?}");
+        }
+    }
 }
