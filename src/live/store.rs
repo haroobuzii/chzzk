@@ -15,14 +15,20 @@ pub struct LiveAccess {
     pub stream_key_hash: Vec<u8>,
 }
 
-/// 라이브 방송을 준비 상태로 만들고 방송 번호를 돌려준다.
-pub async fn create(pool: &PgPool, title: &str, key_hash: &[u8]) -> Result<i64, sqlx::Error> {
+/// `owner_id`(사용자 번호)가 소유자인 라이브 방송을 준비 상태로 만들고 방송 번호를 돌려준다.
+pub async fn create(
+    pool: &PgPool,
+    owner_id: i64,
+    title: &str,
+    key_hash: &[u8],
+) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO broadcasts (title, kind, status, stream_key_hash)
-         VALUES ($1, 'live', 'ready', $2) RETURNING id",
+        "INSERT INTO broadcasts (title, kind, status, stream_key_hash, owner_id)
+         VALUES ($1, 'live', 'ready', $2, $3) RETURNING id",
     )
     .bind(title)
     .bind(key_hash)
+    .bind(owner_id)
     .fetch_one(pool)
     .await
 }

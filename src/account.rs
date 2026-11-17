@@ -78,6 +78,31 @@ pub fn HeaderLogin() -> Element {
     }
 }
 
+/// 로그인한 사람에게만 `children`을 보여 준다(녹화 올리기, 라이브 시작).
+/// 비로그인이면 로그인 화면(`/login?next=<지금 주소>`)으로 보내므로, 로그인 뒤 이 화면으로 돌아온다.
+/// 로그인 상태를 묻는 동안에는 안내 문구만 보여 준다. 그래서 비로그인에게 카메라 권한 등을 묻지 않는다.
+#[component]
+pub fn RequireLogin(children: Element) -> Element {
+    let state = use_login_state();
+    let route = use_route::<Route>();
+    let navigator = use_navigator();
+    // 로그인 상태가 바뀔 때마다(처음 확인, 로그아웃) 다시 본다.
+    use_effect(move || {
+        if state() == LoginState::Anonymous {
+            navigator.replace(Route::Login {
+                next: route.to_string(),
+            });
+        }
+    });
+
+    match state() {
+        LoginState::User(_) => children,
+        _ => rsx! {
+            p { "로그인 상태를 확인하는 중…" }
+        },
+    }
+}
+
 /// 로그인 뒤에 돌아갈 이 서비스 안의 화면. `next`가 `/`로 시작하고 `//`로 시작하지 않을 때만 받는다.
 /// 아니면 첫 화면이다. 다른 사이트로 보내는 링크에 속지 않기 위해서다.
 pub fn safe_next(next: &str) -> Route {

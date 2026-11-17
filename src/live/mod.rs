@@ -18,7 +18,7 @@ mod watch_tests;
 
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{FromRef, Path, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
@@ -28,6 +28,7 @@ use serde_json::json;
 use sqlx::PgPool;
 
 use crate::{
+    auth::CurrentUser,
     number::parse_number,
     routes::{bad_request, failure, not_found},
     title::validate_title,
@@ -41,6 +42,13 @@ use store::LiveAccess;
 pub struct LiveState {
     pub pool: PgPool,
     pub mediamtx: MediaMtx,
+}
+
+/// 현재 사용자 확인([`CurrentUser`])이 세션을 찾을 DB.
+impl FromRef<LiveState> for PgPool {
+    fn from_ref(state: &LiveState) -> Self {
+        state.pool.clone()
+    }
 }
 
 /// 라이브 방송 API 라우터.
@@ -93,8 +101,13 @@ struct StartLive {
 
 /// `POST /api/live`: JSON `{title}`로 라이브 방송을 준비 상태로 만든다.
 ///
+/// 로그인이 필요하다(비로그인은 401). 로그인한 사용자가 소유자가 된다.
 /// 성공하면 201과 `{id, key}`를 준다. 송출 키 원문은 이 응답에만 담기고 DB에는 해시만 남는다.
-async fn start(State(state): State<LiveState>, body: Bytes) -> Response {
+async fn start(State(state): State<LiveState>, current: CurrentUser, body: Bytes) -> Response {
+    let owner = match current.require() {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
     let Ok(input) = serde_json::from_slice::<StartLive>(&body) else {
         return bad_request("bad_request", "요청을 읽지 못했어요. 다시 시도해 주세요.");
     };
@@ -104,7 +117,7 @@ async fn start(State(state): State<LiveState>, body: Bytes) -> Response {
     };
 
     let key = key::generate();
-    match store::create(&state.pool, &title, &key::hash(&key)).await {
+    match store::create(&state.pool, owner.id, &title, &key::hash(&key)).await {
         Ok(id) => (StatusCode::CREATED, Json(json!({ "id": id, "key": key }))).into_response(),
         Err(e) => {
             dioxus::logger::tracing::error!("라이브 방송 시작 실패: {e}");

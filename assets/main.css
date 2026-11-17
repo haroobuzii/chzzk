@@ -173,6 +173,23 @@ h1 {
     font-size: 13px;
 }
 
+/* 소유자 아이디(없으면 "익명") */
+.card-owner {
+    margin: 0 0 2px;
+    overflow: hidden;
+    color: #d0d2d8;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.detail-owner {
+    margin: 0 0 4px;
+    color: #d0d2d8;
+    font-size: 14px;
+    font-weight: 600;
+}
+
 /* 등록 화면 */
 .register-form {
     display: flex;

@@ -30,7 +30,7 @@ pub struct User {
     pub username: String,
 }
 
-// `require_owner`, `require`, `login_required`는 방송 관리·댓글 라우트(02~05 티켓)가 쓴다.
+// `require_owner`는 방송 관리 라우트(03·04 티켓)가 쓴다.
 // 그 전까지는 서버 빌드에서 쓰는 곳이 없어 경고가 나므로 끈다. 쓰기 시작하면 이 `allow`들을 지운다.
 #[allow(dead_code)]
 impl User {
@@ -55,14 +55,12 @@ impl CurrentUser {
     }
 
     /// 로그인한 사용자를 돌려준다. 비로그인이면 401 응답.
-    #[allow(dead_code)]
     pub fn require(self) -> Result<User, Response> {
         self.0.ok_or_else(login_required)
     }
 }
 
 /// 401: 로그인이 필요한데 로그인하지 않았다.
-#[allow(dead_code)]
 pub fn login_required() -> Response {
     failure(
         StatusCode::UNAUTHORIZED,

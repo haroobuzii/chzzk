@@ -16,6 +16,7 @@ use tower::ServiceExt;
 
 use super::fake_mediamtx::{FakeMediaMtx, FAKE_ANSWER, FAKE_SECRET, FAKE_SESSION_ID};
 use super::{api, LiveState};
+pub use crate::auth::personas::Persona;
 pub use crate::test_support::at;
 use crate::{BroadcastKind, LiveStatus};
 
@@ -33,6 +34,8 @@ impl LiveApp {
             pool: pool.clone(),
             mediamtx: fake.client(),
         };
+        // `request`가 붙이는 테스트 사용자의 세션을 DB에 만들어 둔다.
+        Persona::ensure_tester(&pool).await;
         Self {
             router: api(state),
             pool,
@@ -40,7 +43,21 @@ impl LiveApp {
         }
     }
 
+    /// 요청을 보낸다. 쿠키가 없는 요청에는 로그인한 테스트 사용자([`Persona::tester`])의 쿠키를 붙인다.
     pub async fn request(&self, request: Request<Body>) -> Response {
+        if request.headers().contains_key(header::COOKIE) {
+            self.send(request).await
+        } else {
+            self.send(Persona::tester().sign(request)).await
+        }
+    }
+
+    /// `persona`로 요청을 보낸다. 비로그인이면 쿠키 없이 보낸다.
+    pub async fn request_as(&self, persona: &Persona, request: Request<Body>) -> Response {
+        self.send(persona.sign(request)).await
+    }
+
+    async fn send(&self, request: Request<Body>) -> Response {
         self.router.clone().oneshot(request).await.unwrap()
     }
 
@@ -194,6 +211,50 @@ async fn 라이브_제목_규칙을_어기면_400이다(pool: PgPool) {
     let response = app.request(broken).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert!(body_json(response).await["message"].is_string());
+}
+
+// ── 로그인과 소유자(3단계) ──
+
+#[sqlx::test]
+async fn 로그인하지_않고_라이브를_시작하면_401이고_방송이_남지_않는다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool).await;
+
+    let response = app
+        .request_as(&Persona::anonymous(), start_request("익명 라이브"))
+        .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(body_json(response).await["code"], "login_required");
+    // 준비 상태는 목록·조회에 보이지 않으므로 표를 직접 센다.
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM broadcasts")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[sqlx::test]
+async fn 로그인한_사용자가_시작한_라이브_방송의_소유자는_그_사용자다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool.clone()).await;
+    let owner = Persona::user_a(&pool).await;
+
+    let response = app.request_as(&owner, start_request("내 라이브")).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let id = body_json(response).await["id"].as_i64().unwrap();
+    app.fake.set_online(&[&format!("live/{id}")]);
+    app.sync(at(1)).await;
+
+    let list = crate::db::list_broadcasts(&app.pool).await.unwrap();
+    assert_eq!(list[0].owner.as_deref(), Some("user_a"));
+    let found = crate::db::find_broadcast(&app.pool, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.owner.as_deref(), Some("user_a"));
 }
 
 // ── 송출 연결 ──

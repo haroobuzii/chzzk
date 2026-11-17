@@ -5,7 +5,7 @@
 
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Path, State},
+    extract::{DefaultBodyLimit, FromRef, Multipart, Path, State},
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -19,6 +19,7 @@ use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
 use crate::{
+    auth::{CurrentUser, User},
     config::Config,
     number::parse_number,
     title::{validate_title, InvalidTitle},
@@ -40,6 +41,13 @@ impl AppState {
             videos: VideoStore::new(&config.data_dir),
             max_upload_bytes: config.max_upload_bytes,
         }
+    }
+}
+
+/// 현재 사용자 확인([`CurrentUser`])이 세션을 찾을 DB.
+impl FromRef<AppState> for PgPool {
+    fn from_ref(state: &AppState) -> Self {
+        state.pool.clone()
     }
 }
 
@@ -104,16 +112,29 @@ pub(crate) fn not_found() -> Response {
 
 /// `POST /api/broadcasts`: multipart의 `title`과 `video`로 방송을 등록한다.
 ///
-/// 성공하면 201과 `{"id": 방송 번호}`를 돌려준다.
+/// 로그인이 필요하다. 비로그인이면 본문을 읽기 전에 401로 거절한다.
+/// 성공하면 201과 `{"id": 방송 번호}`를 돌려주고, 로그인한 사용자가 소유자가 된다.
 /// 중간에 실패하거나 연결이 끊기면 임시 파일은 저절로 지워지고 방송 정보도 남지 않는다.
-async fn register(State(state): State<AppState>, multipart: Multipart) -> Response {
-    match try_register(&state, multipart).await {
+async fn register(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    multipart: Multipart,
+) -> Response {
+    let owner = match current.require() {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match try_register(&state, &owner, multipart).await {
         Ok(id) => (StatusCode::CREATED, Json(json!({ "id": id }))).into_response(),
         Err(response) => response,
     }
 }
 
-async fn try_register(state: &AppState, mut multipart: Multipart) -> Result<i64, Response> {
+async fn try_register(
+    state: &AppState,
+    owner: &User,
+    mut multipart: Multipart,
+) -> Result<i64, Response> {
     let mut title = None;
     let mut upload = None;
 
@@ -139,7 +160,7 @@ async fn try_register(state: &AppState, mut multipart: Multipart) -> Result<i64,
         return Err(bad_request("missing_video", "영상 파일을 골라 주세요."));
     };
 
-    save(state, &title, upload).await.map_err(|e| {
+    save(state, owner, &title, upload).await.map_err(|e| {
         dioxus::logger::tracing::error!("방송 등록 실패: {e}");
         failure(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -243,9 +264,15 @@ pub(crate) fn bad_request(code: &str, message: &str) -> Response {
 /// 1. 트랜잭션 안에서 방송 정보를 넣어 번호를 받고 영상 키를 정한다.
 /// 2. 임시 파일을 영상 키 위치로 옮긴다. 실패하면 트랜잭션이 되돌려진다.
 /// 3. 커밋한다. 실패하면 옮긴 파일을 지운다.
-async fn save(state: &AppState, title: &str, upload: NamedTempFile) -> anyhow::Result<i64> {
+async fn save(
+    state: &AppState,
+    owner: &User,
+    title: &str,
+    upload: NamedTempFile,
+) -> anyhow::Result<i64> {
     let mut tx = state.pool.begin().await?;
     let id = crate::db::insert_broadcast(&mut tx, title).await?;
+    crate::db::set_owner(&mut tx, id, owner.id).await?;
     let key = VideoStore::key_for(id);
     crate::db::set_video_key(&mut tx, id, &key).await?;
 
@@ -289,6 +316,8 @@ pub(crate) mod tests {
     use axum::http::Request;
     use tempfile::TempDir;
 
+    pub use crate::auth::personas::Persona;
+
     /// `ftyp` 시그니처만 갖춘 아주 작은 가짜 MP4. 코덱은 검사하지 않으므로 이것으로 충분하다.
     pub fn tiny_mp4() -> Vec<u8> {
         let mut bytes = vec![0, 0, 0, 0x18];
@@ -315,11 +344,26 @@ pub(crate) mod tests {
             videos: VideoStore::new(data_dir.path()),
             max_upload_bytes,
         };
+        // 요청 도우미가 붙이는 테스트 사용자의 세션을, 요청이 라우터에 닿기 전에 DB에 만들어 둔다.
+        // 이 함수는 동기라서 여기서 바로 DB에 쓸 수 없다.
+        let router = api(state).layer(axum::middleware::from_fn_with_state(
+            pool.clone(),
+            ensure_tester,
+        ));
         TestApp {
-            router: api(state),
+            router,
             pool,
             data_dir,
         }
+    }
+
+    async fn ensure_tester(
+        State(pool): State<PgPool>,
+        request: Request<Body>,
+        next: axum::middleware::Next,
+    ) -> Response {
+        Persona::ensure_tester(&pool).await;
+        next.run(request).await
     }
 
     const BOUNDARY: &str = "----chzzk-test-boundary";
@@ -347,14 +391,22 @@ pub(crate) mod tests {
         body
     }
 
+    /// 등록 요청. 로그인한 테스트 사용자([`Persona::tester`])의 쿠키가 붙는다.
     pub fn register_request(body: Vec<u8>) -> Request<Body> {
-        Request::post("/api/broadcasts")
-            .header(
-                "content-type",
-                format!("multipart/form-data; boundary={BOUNDARY}"),
-            )
-            .body(Body::from(body))
-            .unwrap()
+        register_request_as(&Persona::tester(), body)
+    }
+
+    /// `persona`가 보내는 등록 요청. 비로그인이면 쿠키가 없다.
+    pub fn register_request_as(persona: &Persona, body: Vec<u8>) -> Request<Body> {
+        persona.sign(
+            Request::post("/api/broadcasts")
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={BOUNDARY}"),
+                )
+                .body(Body::from(body))
+                .unwrap(),
+        )
     }
 
     pub async fn send(router: &Router, request: Request<Body>) -> (StatusCode, serde_json::Value) {
@@ -686,5 +738,46 @@ pub(crate) mod tests {
         let b = register_ok(&app, "같은 제목").await;
 
         assert_ne!(a, b);
+    }
+
+    // ── 로그인과 소유자(3단계) ──
+
+    #[sqlx::test]
+    async fn 로그인하지_않고_등록하면_401이고_방송도_파일도_남지_않는다(
+        pool: PgPool,
+    ) {
+        let app = app(pool);
+        let body = multipart_body(Some("익명 등록"), Some(("clip.mp4", &tiny_mp4())));
+
+        let (status, json) = send(
+            &app.router,
+            register_request_as(&Persona::anonymous(), body),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "응답: {json}");
+        assert_eq!(json["code"], "login_required");
+        assert_nothing_left(&app).await;
+    }
+
+    #[sqlx::test]
+    async fn 로그인한_사용자가_등록한_방송의_소유자는_그_사용자다(
+        pool: PgPool,
+    ) {
+        let app = app(pool.clone());
+        let owner = Persona::user_a(&pool).await;
+        let body = multipart_body(Some("내 방송"), Some(("clip.mp4", &tiny_mp4())));
+
+        let (status, json) = send(&app.router, register_request_as(&owner, body)).await;
+
+        assert_eq!(status, StatusCode::CREATED, "응답: {json}");
+        let id = json["id"].as_i64().unwrap();
+        let list = crate::db::list_broadcasts(&app.pool).await.unwrap();
+        assert_eq!(list[0].owner.as_deref(), Some("user_a"));
+        let found = crate::db::find_broadcast(&app.pool, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.owner.as_deref(), Some("user_a"));
     }
 }

@@ -53,6 +53,11 @@ impl Broadcast {
             BroadcastKind::Live => self.started_at.unwrap_or(self.created_at),
         }
     }
+
+    /// 카드와 상세 화면에 보여 줄 소유자. 소유자가 없는 1·2단계 방송은 "익명"이다.
+    pub fn owner_label(&self) -> &str {
+        self.owner.as_deref().unwrap_or("익명")
+    }
 }
 
 /// 방송한 시간을 "12분 34초"처럼 쓴다. 한 시간이 넘으면 "1시간 2분 3초"다.
@@ -83,6 +88,7 @@ mod tests {
             status: Some(status),
             started_at: started.map(at),
             ended_at: ended.map(at),
+            owner: None,
         }
     }
 
@@ -96,9 +102,18 @@ mod tests {
             status: None,
             started_at: None,
             ended_at: None,
+            owner: None,
         };
         assert_eq!(recorded.mark(), Mark::Recorded);
         assert_eq!(recorded.shown_time(), at(3));
+    }
+
+    #[test]
+    fn 소유자는_아이디로_보이고_소유자가_없으면_익명이다() {
+        let mut broadcast = live(LiveStatus::Live, Some(5), None);
+        assert_eq!(broadcast.owner_label(), "익명");
+        broadcast.owner = Some("하루".into());
+        assert_eq!(broadcast.owner_label(), "하루");
     }
 
     #[test]

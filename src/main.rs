@@ -31,7 +31,7 @@ mod title;
 mod videos;
 mod viewer;
 
-use account::{HeaderLogin, Login, Signup};
+use account::{HeaderLogin, Login, RequireLogin, Signup};
 use display::Mark;
 use publisher::NewLive;
 use refresh::{sleep_ms, REFRESH_MS};
@@ -65,6 +65,8 @@ pub struct Broadcast {
     pub started_at: Option<DateTime<Utc>>,
     /// 종료 시각. 종료된 라이브 방송만 가진다.
     pub ended_at: Option<DateTime<Utc>>,
+    /// 소유자(방송을 만든 사용자)의 아이디. 1·2단계에서 만든 방송은 없다(화면에는 "익명").
+    pub owner: Option<String>,
 }
 
 /// 방송 종류.
@@ -270,6 +272,7 @@ fn BroadcastCard(broadcast: Broadcast) -> Element {
                     span { class: "badge {mark.class()}", "{mark.label()}" }
                 }
                 h2 { class: "card-title", title: "{broadcast.title}", "{broadcast.title}" }
+                p { class: "card-owner", title: "{broadcast.owner_label()}", "{broadcast.owner_label()}" }
                 p { class: "card-time", "{format_kst(&broadcast.shown_time())}" }
             }
         }
@@ -304,6 +307,7 @@ fn BroadcastDetail(segment: String) -> Element {
                     preload: "metadata",
                 }
                 h1 { class: "detail-title", "{broadcast.title}" }
+                p { class: "detail-owner", "{broadcast.owner_label()}" }
                 p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
                 Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
             }
@@ -343,9 +347,17 @@ fn NotFound() -> Element {
     }
 }
 
-/// 녹화 올리기 화면: 제목과 MP4 파일을 받아 등록 API로 보낸다.
+/// 녹화 올리기 화면. 로그인한 사용자만 쓸 수 있다.
 #[component]
 fn NewBroadcast() -> Element {
+    rsx! {
+        RequireLogin { RegisterForm {} }
+    }
+}
+
+/// 녹화 올리기 입력: 제목과 MP4 파일을 받아 등록 API로 보낸다.
+#[component]
+fn RegisterForm() -> Element {
     let mut pending = use_signal(|| false);
     let mut progress = use_signal(|| 0u8);
     let mut error = use_signal(|| None::<String>);

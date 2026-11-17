@@ -19,6 +19,12 @@ use tower::ServiceExt;
 /// 테스트 손님들이 함께 쓰는 비밀번호.
 pub const PASSWORD: &str = "password1234";
 
+/// 1·2단계 테스트용 로그인 사용자의 아이디.
+pub const TESTER: &str = "tester";
+
+/// 1·2단계 테스트용 로그인 사용자의 정해 둔 세션 값.
+const TESTER_TOKEN: &str = "stage-1-2-tester-session";
+
 /// 요청을 보내는 사람 하나. 비로그인이면 쿠키가 없다.
 #[derive(Clone, Debug)]
 pub struct Persona {
@@ -45,6 +51,41 @@ impl Persona {
     /// 사용자 B(아이디 `user_b`). A와 다른 사용자다.
     pub async fn user_b(pool: &PgPool) -> Self {
         Self::sign_up(pool, "user_b").await
+    }
+
+    /// 1·2단계 테스트의 공용 요청 도우미가 쓰는 로그인 사용자(아이디 [`TESTER`]).
+    ///
+    /// 그 도우미들은 DB를 모르는 동기 함수라 가입 API를 부를 수 없다. 그래서 정해 둔 세션 값을 쿠키에 담고,
+    /// 테스트 서버(`TestApp`, `LiveApp`)가 [`Persona::ensure_tester`]로 그 세션을 DB에 만들어 둔다.
+    pub fn tester() -> Self {
+        Self {
+            username: Some(TESTER.to_string()),
+            cookie: Some(format!("{}={TESTER_TOKEN}", super::SESSION_COOKIE)),
+        }
+    }
+
+    /// [`Persona::tester`]의 사용자와 세션이 DB에 있게 한다. 이미 있으면 그대로 둔다.
+    pub async fn ensure_tester(pool: &PgPool) {
+        sqlx::query(
+            "INSERT INTO users (username, password_hash) VALUES ($1, 'tester-has-no-password')
+             ON CONFLICT ((lower(username))) DO NOTHING",
+        )
+        .bind(TESTER)
+        .execute(pool)
+        .await
+        .unwrap();
+        // 세션 값 원문의 SHA-256 해시로 찾으므로(store::hash_token) 같은 해시를 넣는다.
+        sqlx::query(
+            "INSERT INTO sessions (token_hash, user_id, expires_at)
+             SELECT sha256(convert_to($1, 'UTF8')), id, now() + interval '1 day'
+             FROM users WHERE username = $2
+             ON CONFLICT (token_hash) DO NOTHING",
+        )
+        .bind(TESTER_TOKEN)
+        .bind(TESTER)
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     /// `username`과 [`PASSWORD`]로 가입하고, 받은 세션 쿠키를 가진 손님을 돌려준다.

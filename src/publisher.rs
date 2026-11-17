@@ -7,7 +7,7 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 
-use crate::{display::Mark, Route};
+use crate::{account::RequireLogin, display::Mark, Route};
 
 /// 송출 화면의 단계.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,8 +91,17 @@ impl PublisherEvent {
     }
 }
 
+/// 라이브 시작 화면. 로그인한 사용자만 쓸 수 있다.
 #[component]
 pub fn NewLive() -> Element {
+    rsx! {
+        RequireLogin { Publisher {} }
+    }
+}
+
+/// 송출 화면 본문: 카메라 미리보기, 제목, 방송 시작·종료.
+#[component]
+fn Publisher() -> Element {
     let mut phase = use_signal(|| Phase::Preview);
     let mut error = use_signal(|| None::<String>);
     let mut title = use_signal(String::new);

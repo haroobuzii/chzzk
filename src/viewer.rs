@@ -50,6 +50,7 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
                 }
                 "{broadcast.title}"
             }
+            p { class: "detail-owner", "{broadcast.owner_label()}" }
             p { class: "card-time", "시작 {format_kst(&shown_time)}" }
             if let Some(ended_at) = broadcast.ended_at {
                 p { class: "card-time", "방송한 시간 {broadcast_duration(shown_time, ended_at)}" }

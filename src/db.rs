@@ -25,19 +25,23 @@ pub async fn connect(
     Ok(pool)
 }
 
-/// 조회 결과에 담는 칸.
-const COLUMNS: &str = "id, title, created_at, kind, status, started_at, ended_at";
+/// 조회 결과에 담는 칸. 소유자는 사용자 번호 대신 아이디로 담는다.
+const COLUMNS: &str = "b.id, b.title, b.created_at, b.kind, b.status, b.started_at, b.ended_at, \
+                       owner.username AS owner";
+
+/// 조회할 표: 방송과, 소유자가 있으면 그 사용자.
+const FROM: &str = "broadcasts b LEFT JOIN users owner ON owner.id = b.owner_id";
 
 /// 화면에 보이는 방송만 고르는 조건. 준비·버려짐 라이브 방송은 없는 방송으로 취급한다.
-const VISIBLE: &str = "(status IS NULL OR status IN ('live', 'ended'))";
+const VISIBLE: &str = "(b.status IS NULL OR b.status IN ('live', 'ended'))";
 
 /// 화면에 보이는 방송 목록. 최신 방송이 먼저 온다.
 /// 녹화 방송은 등록 시각, 라이브 방송은 시작 시각을 기준으로 한다.
 pub async fn list_broadcasts(pool: &PgPool) -> Result<Vec<Broadcast>, sqlx::Error> {
     // 같은 시각의 방송은 번호가 큰(나중에 만든) 쪽을 먼저 둔다.
     let sql = format!(
-        "SELECT {COLUMNS} FROM broadcasts WHERE {VISIBLE} \
-         ORDER BY COALESCE(started_at, created_at) DESC, id DESC"
+        "SELECT {COLUMNS} FROM {FROM} WHERE {VISIBLE} \
+         ORDER BY COALESCE(b.started_at, b.created_at) DESC, b.id DESC"
     );
     sqlx::query_as(&sql).fetch_all(pool).await
 }
@@ -52,6 +56,16 @@ pub async fn insert_broadcast(conn: &mut PgConnection, title: &str) -> Result<i6
         .await
 }
 
+/// 방금 넣은 방송의 소유자(사용자 번호)를 정한다. 등록 처리가 같은 트랜잭션에서 부른다.
+pub async fn set_owner(conn: &mut PgConnection, id: i64, owner_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE broadcasts SET owner_id = $1 WHERE id = $2")
+        .bind(owner_id)
+        .bind(id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// 방금 넣은 방송의 영상 키를 정한다.
 pub async fn set_video_key(conn: &mut PgConnection, id: i64, key: &str) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE broadcasts SET video_key = $1 WHERE id = $2")
@@ -64,7 +78,7 @@ pub async fn set_video_key(conn: &mut PgConnection, id: i64, key: &str) -> Resul
 
 /// 방송 번호로 화면에 보이는 방송 하나를 찾는다. 없거나 준비·버려짐이면 `None`.
 pub async fn find_broadcast(pool: &PgPool, id: i64) -> Result<Option<Broadcast>, sqlx::Error> {
-    let sql = format!("SELECT {COLUMNS} FROM broadcasts WHERE id = $1 AND {VISIBLE}");
+    let sql = format!("SELECT {COLUMNS} FROM {FROM} WHERE b.id = $1 AND {VISIBLE}");
     sqlx::query_as(&sql).bind(id).fetch_optional(pool).await
 }
 
@@ -230,6 +244,52 @@ mod tests {
             no_status.is_err(),
             "방송 상태가 없는 라이브 방송은 거절돼야 한다"
         );
+    }
+
+    /// 2단계까지의 마이그레이션(0001, 0002)만 적용한 DB에 그때 방식으로 방송을 넣고,
+    /// 나머지 마이그레이션을 적용한 뒤 조회한다. 운영 DB가 3단계로 올라가는 순서 그대로다.
+    #[sqlx::test(migrations = false)]
+    async fn 마이그레이션_뒤에도_1_2단계_방송은_그대로이고_소유자가_없다(
+        pool: PgPool,
+    ) {
+        let mut stage2 = sqlx::migrate!();
+        stage2.migrations = stage2
+            .migrations
+            .iter()
+            .filter(|m| m.version <= 2)
+            .cloned()
+            .collect();
+        stage2.run(&pool).await.unwrap();
+        let recorded: i64 = sqlx::query_scalar(
+            "INSERT INTO broadcasts (title, video_key) VALUES ('옛 녹화', 'videos/1.mp4') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let live: i64 = sqlx::query_scalar(
+            "INSERT INTO broadcasts (title, kind, status, stream_key_hash, started_at, ended_at)
+             VALUES ('옛 라이브', 'live', 'ended', sha256('키'::bytea), $1, $2) RETURNING id",
+        )
+        .bind(at(1))
+        .bind(at(2))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        sqlx::migrate!().run(&pool).await.unwrap();
+
+        let list = list_broadcasts(&pool).await.unwrap();
+        let titles: Vec<(i64, &str, Option<&str>)> = list
+            .iter()
+            .map(|b| (b.id, b.title.as_str(), b.owner.as_deref()))
+            .collect();
+        assert_eq!(
+            titles,
+            vec![(recorded, "옛 녹화", None), (live, "옛 라이브", None)]
+        );
+        let found = find_broadcast(&pool, live).await.unwrap().unwrap();
+        assert_eq!(found.owner, None);
+        assert_eq!(found.status, Some(LiveStatus::Ended));
     }
 
     #[sqlx::test]
