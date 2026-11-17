@@ -47,6 +47,7 @@ body {
 .header-actions {
     flex-shrink: 0;
     display: flex;
+    align-items: center;
     gap: 8px;
 }
 
@@ -188,7 +189,8 @@ h1 {
     font-size: 14px;
 }
 
-.register-form input[type="text"] {
+.register-form input[type="text"],
+.register-form input[type="password"] {
     padding: 10px 12px;
     font-size: 16px;
     color: #e8e8ea;
@@ -369,4 +371,42 @@ h1 {
     min-width: 0;
     color: #8fb0ff;
     word-break: break-all;
+}
+
+/* 머리글의 "아이디님". 긴 아이디는 말줄임표로 줄인다. */
+.header-user {
+    max-width: 10em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #c4c6cc;
+    font-size: 14px;
+}
+
+/* 로그인 칸이 더해져 좁은 휴대폰에서 버튼이 넘치면 다음 줄로 내린다. */
+@media (max-width: 520px) {
+    .site-header {
+        flex-wrap: wrap;
+    }
+
+    .header-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+}
+
+/* 가입 화면의 입력 규칙 안내 */
+.hint {
+    color: #8a8d95;
+    font-size: 13px;
+}
+
+/* 로그인 ↔ 회원가입 화면 사이를 오가는 링크 */
+.form-switch {
+    margin-top: 20px;
+    color: #a0a3ab;
+}
+
+.form-switch a {
+    color: #7aa2ff;
 }

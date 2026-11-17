@@ -6,6 +6,9 @@ use chrono::{DateTime, FixedOffset, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+mod account;
+#[cfg(feature = "server")]
+mod auth;
 #[cfg(feature = "server")]
 mod config;
 #[cfg(feature = "server")]
@@ -28,6 +31,7 @@ mod title;
 mod videos;
 mod viewer;
 
+use account::{HeaderLogin, Login, Signup};
 use display::Mark;
 use publisher::NewLive;
 use refresh::{sleep_ms, REFRESH_MS};
@@ -139,6 +143,11 @@ mod route {
         #[route("/live/new")]
         NewLive {},
         /// 방송 번호는 글자로 받아 직접 읽는다. 번호가 아닌 주소도 "방송을 찾을 수 없습니다"로 보여 주기 위해서다.
+        /// 로그인 뒤에는 `next`(이 서비스 안의 주소)로 돌아간다.
+        #[route("/login?:next")]
+        Login { next: String },
+        #[route("/signup?:next")]
+        Signup { next: String },
         #[route("/broadcasts/:segment")]
         BroadcastDetail { segment: String },
         #[route("/:..rest")]
@@ -149,6 +158,7 @@ use route::Route;
 
 #[component]
 fn App() -> Element {
+    account::provide_login_state();
     rsx! {
         document::Title { "녹화방송" }
         document::Meta { name: "viewport", content: "width=device-width, initial-scale=1" }
@@ -157,7 +167,7 @@ fn App() -> Element {
     }
 }
 
-/// 모든 화면에 공통인 틀: 맨 위 머리글과 그 아래 본문.
+/// 모든 화면에 공통인 틀: 맨 위 머리글(로그인 칸 포함)과 그 아래 본문.
 #[component]
 fn Shell() -> Element {
     rsx! {
@@ -166,6 +176,7 @@ fn Shell() -> Element {
             nav { class: "header-actions",
                 Link { class: "button live-button", to: Route::NewLive {}, "라이브 시작" }
                 Link { class: "button", to: Route::NewBroadcast {}, "녹화 올리기" }
+                HeaderLogin {}
             }
         }
         main { Outlet::<Route> {} }
