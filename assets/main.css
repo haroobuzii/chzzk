@@ -508,3 +508,41 @@ h1 {
     border: none;
     cursor: pointer;
 }
+
+/* 상세 화면의 소유자 버튼 줄: 제목 수정, 삭제, (라이브) 방송 종료. 좁은 화면에서는 줄을 바꾼다. */
+.owner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.owner-actions .button {
+    border: 1px solid #3a3d45;
+    background: #24262c;
+    cursor: pointer;
+}
+
+.owner-actions .danger-button {
+    border-color: #e5383b;
+    color: #ff8a8c;
+}
+
+.rename-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+}
+
+.rename-input {
+    flex: 1 1 200px;
+    min-width: 0;
+    padding: 10px 12px;
+    font-size: 15px;
+    border: 1px solid #3a3d45;
+    border-radius: 8px;
+    background: #16171b;
+    color: #e8e8ea;
+}
