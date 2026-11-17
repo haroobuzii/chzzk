@@ -55,14 +55,12 @@ impl CurrentUser {
     }
 
     /// 로그인한 사용자를 돌려준다. 비로그인이면 401 응답.
-    #[allow(dead_code)]
     pub fn require(self) -> Result<User, Response> {
         self.0.ok_or_else(login_required)
     }
 }
 
 /// 401: 로그인이 필요한데 로그인하지 않았다.
-#[allow(dead_code)]
 pub fn login_required() -> Response {
     failure(
         StatusCode::UNAUTHORIZED,

@@ -29,7 +29,7 @@ pub async fn connect(
 const COLUMNS: &str = "id, title, created_at, kind, status, started_at, ended_at";
 
 /// 화면에 보이는 방송만 고르는 조건. 준비·버려짐 라이브 방송은 없는 방송으로 취급한다.
-const VISIBLE: &str = "(status IS NULL OR status IN ('live', 'ended'))";
+pub(crate) const VISIBLE: &str = "(status IS NULL OR status IN ('live', 'ended'))";
 
 /// 화면에 보이는 방송 목록. 최신 방송이 먼저 온다.
 /// 녹화 방송은 등록 시각, 라이브 방송은 시작 시각을 기준으로 한다.

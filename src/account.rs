@@ -207,7 +207,7 @@ fn CredentialsForm(kind: FormKind, next: String) -> Element {
 
 /// 브라우저의 `fetch`로 JSON API를 부르고 `(상태 코드, 응답 JSON)`을 돌려준다.
 /// 서버에 닿지 못하면 사용자에게 보여 줄 문구를 돌려준다.
-async fn call_api(
+pub(crate) async fn call_api(
     method: &str,
     url: &str,
     body: Option<serde_json::Value>,

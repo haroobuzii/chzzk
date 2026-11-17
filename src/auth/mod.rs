@@ -23,9 +23,7 @@ use serde::Deserialize;
 use serde_json::json;
 use sqlx::PgPool;
 
-// 401·403 도우미는 방송 관리·댓글 라우트(02~05 티켓)가 쓴다. 그 전까지는 서버 빌드에서 쓰는 곳이 없다.
-#[allow(unused_imports)]
-pub use current_user::{forbidden, login_required, CurrentUser, User};
+pub use current_user::{forbidden, CurrentUser, User};
 pub use origin::guard_origin;
 
 use crate::routes::{bad_request, failure};
