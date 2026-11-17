@@ -17,7 +17,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 제목 수정은 이렇게 응답한다.
   - 소유자는 200이고, 목록·상세에 새 제목이 보인다. 제목 위반은 400이다

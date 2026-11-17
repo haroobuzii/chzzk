@@ -8,7 +8,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 가입하면 201과 `HttpOnly`·`SameSite=Lax` 세션 쿠키가 온다. 그 쿠키로 `GET /api/auth/me`가 아이디를 돌려준다. DB에는 비밀번호 원문과 세션 값 원문이 없다
 - [x] 가입은 이렇게 거절된다.

@@ -17,7 +17,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 송출 연결 POST·PATCH·DELETE와 종료는 이렇게 응답한다. 거절이면 가짜 MediaMTX에 요청이 가지 않고 상태도 그대로다.
   - 비로그인은 401
