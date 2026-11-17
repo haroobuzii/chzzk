@@ -33,7 +33,8 @@ const COLUMNS: &str = "b.id, b.title, b.created_at, b.kind, b.status, b.started_
 const FROM: &str = "broadcasts b LEFT JOIN users owner ON owner.id = b.owner_id";
 
 /// 화면에 보이는 방송만 고르는 조건. 준비·버려짐 라이브 방송은 없는 방송으로 취급한다.
-const VISIBLE: &str = "(b.status IS NULL OR b.status IN ('live', 'ended'))";
+/// 댓글 저장소도 `broadcasts` 표만 놓고 쓰므로 표 별칭 없이 쓴다. 사용자 표에는 `status` 칸이 없어 함께 조회해도 헷갈리지 않는다.
+pub(crate) const VISIBLE: &str = "(status IS NULL OR status IN ('live', 'ended'))";
 
 /// 화면에 보이는 방송 목록. 최신 방송이 먼저 온다.
 /// 녹화 방송은 등록 시각, 라이브 방송은 시작 시각을 기준으로 한다.

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 mod account;
 #[cfg(feature = "server")]
 mod auth;
+mod comments;
 #[cfg(feature = "server")]
 mod config;
 #[cfg(feature = "server")]
@@ -32,6 +33,7 @@ mod videos;
 mod viewer;
 
 use account::{HeaderLogin, Login, RequireLogin, Signup};
+use comments::CommentSection;
 use display::Mark;
 use publisher::NewLive;
 use refresh::{sleep_ms, REFRESH_MS};
@@ -311,6 +313,7 @@ fn BroadcastDetail(segment: String) -> Element {
                 p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
                 Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
             }
+            CommentSection { broadcast_id: broadcast.id, live: false }
         },
         Some(Ok(None)) => rsx! { NotFound {} },
         Some(Err(e)) => rsx! {
