@@ -104,11 +104,17 @@ pub async fn check_credentials(
 }
 
 /// 사용자의 새 세션을 만들고 세션 값 원문을 돌려준다. 원문은 쿠키에만 담긴다.
+///
+/// 만들기 전에 만료된 세션(누구의 것이든)을 지운다. 만료된 세션은 다시 쓰이지 않으므로 쌓이지 않게 한다.
 pub async fn create_session(
     pool: &PgPool,
     user_id: i64,
     now: DateTime<Utc>,
 ) -> sqlx::Result<String> {
+    sqlx::query("DELETE FROM sessions WHERE expires_at <= $1")
+        .bind(now)
+        .execute(pool)
+        .await?;
     let mut bytes = [0u8; SESSION_BYTES];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     let token = hex::encode(bytes);

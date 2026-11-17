@@ -1,4 +1,4 @@
-//! 계정 라우터 테스트.
+//! 로그인 API 라우터 테스트.
 //!
 //! 실제 PostgreSQL(`#[sqlx::test]` 임시 DB)을 쓴다. 서버를 띄우지 않고 라우터에 요청을 직접 넣어
 //! 응답과 그 뒤의 조회 결과(`GET /api/auth/me`)로 판단한다.
@@ -16,7 +16,7 @@ use tower::ServiceExt;
 use super::personas::{Persona, PASSWORD};
 use super::{CurrentUser, User};
 
-/// 실제 서버처럼 `Origin` 확인을 씌운 계정 라우터.
+/// 실제 서버처럼 `Origin` 확인을 씌운 로그인 API 라우터.
 fn router(pool: &PgPool) -> Router {
     super::guard_origin(super::api(pool.clone()))
 }
@@ -415,4 +415,60 @@ fn 소유자_확인은_소유자만_통과시키고_소유자_없는_방송은_�
         let response = user.require_owner(owner).unwrap_err();
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "{owner:?}");
     }
+}
+
+#[sqlx::test]
+async fn 비밀번호는_128자까지이고_더_길면_가입은_400이다(pool: PgPool) {
+    let router = router(&pool);
+
+    let too_long = "a".repeat(129);
+    let response = send(&router, credentials("/api/auth/signup", "haroo", &too_long)).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.headers().get(header::SET_COOKIE).is_none());
+    assert_eq!(body_json(response).await["code"], "password_too_long");
+
+    let longest = "a".repeat(128);
+    let response = send(&router, credentials("/api/auth/signup", "haroo", &longest)).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+}
+
+#[sqlx::test]
+async fn 비밀번호가_128자보다_긴_비밀번호로_로그인하면_틀린_비밀번호와_같은_401이다(
+    pool: PgPool,
+) {
+    let router = router(&pool);
+    Persona::sign_up(&pool, "haroo").await;
+
+    let response = send(
+        &router,
+        credentials("/api/auth/login", "haroo", &"a".repeat(129)),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(response.headers().get(header::SET_COOKIE).is_none());
+    assert_eq!(body_json(response).await["code"], "bad_credentials");
+}
+
+#[sqlx::test]
+async fn 로그인하면_만료된_세션은_DB에서_지운다(pool: PgPool) {
+    let router = router(&pool);
+    Persona::user_a(&pool).await;
+    Persona::user_b(&pool).await;
+
+    // 7일을 기다릴 수 없으므로 DB에서 두 사람의 세션 만료 시각을 지난 시각으로 바꾼다.
+    sqlx::query("UPDATE sessions SET expires_at = now() - interval '1 second'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let response = send(&router, credentials("/api/auth/login", "user_a", PASSWORD)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // 만료된 세션이 쌓이지 않는지는 공개 API로 볼 수 없으므로 DB를 직접 센다.
+    let sessions: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(sessions, 1, "방금 만든 세션만 남는다");
 }

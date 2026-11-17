@@ -43,7 +43,7 @@ pub async fn router() -> anyhow::Result<Router> {
         videos: crate::videos::VideoStore::new(&config().data_dir),
         mediamtx: MEDIAMTX.get().expect("위에서 정했다").clone(),
     };
-    // Dioxus가 만든 화면·서버 함수 라우터에 계정 API, 등록 API, 라이브 API, 댓글 API, 방송 관리 API 라우트를 덧붙인다.
+    // Dioxus가 만든 화면·서버 함수 라우터에 로그인 API, 등록 API, 라이브 API, 댓글 API, 방송 관리 API 라우트를 덧붙인다.
     // 다른 출처에서 온 상태 변경 요청은 어느 라우트든 막는다.
     Ok(crate::auth::guard_origin(
         dioxus::server::router(crate::App)

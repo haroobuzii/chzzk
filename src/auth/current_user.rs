@@ -19,7 +19,7 @@ use axum::{
 use sqlx::PgPool;
 
 use super::{store, SESSION_COOKIE};
-use crate::routes::failure;
+use crate::routes::{failure, server_error};
 
 /// 로그인한 사용자 하나.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,14 +85,11 @@ where
         let pool = PgPool::from_ref(state);
         match store::find_session_user(&pool, &token, chrono::Utc::now()).await {
             Ok(user) => Ok(Self(user)),
-            Err(e) => {
-                dioxus::logger::tracing::error!("로그인 세션 조회 실패: {e}");
-                Err(failure(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "server_error",
-                    "로그인 상태를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.",
-                ))
-            }
+            Err(e) => Err(server_error(
+                "로그인 세션 조회",
+                e,
+                "로그인 상태를 확인하지 못했어요.",
+            )),
         }
     }
 }
