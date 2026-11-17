@@ -182,10 +182,9 @@ async fn 목록은_누구나_오래된_순으로_보고_mine은_작성자에게�
 async fn 종료된_라이브_방송에도_댓글을_쓴다(pool: PgPool) {
     let router = router(&pool);
     let a = Persona::user_a(&pool).await;
-    // 송출 키 칸은 2단계 스키마의 제약 때문에 채운다(02 티켓이 송출 키를 없애면 이 칸도 뺀다).
     let ended: i64 = sqlx::query_scalar(
-        "INSERT INTO broadcasts (title, kind, status, stream_key_hash, started_at, ended_at)
-         VALUES ('끝난 라이브', 'live', 'ended', sha256('키'::bytea), now(), now()) RETURNING id",
+        "INSERT INTO broadcasts (title, kind, status, started_at, ended_at)
+         VALUES ('끝난 라이브', 'live', 'ended', now(), now()) RETURNING id",
     )
     .fetch_one(&pool)
     .await

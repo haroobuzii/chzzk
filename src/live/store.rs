@@ -1,4 +1,4 @@
-//! 라이브 방송 저장소: 시작, 송출 키 확인에 쓸 정보 조회, 방송 상태 바꾸기.
+//! 라이브 방송 저장소: 시작, 소유자 확인에 쓸 정보 조회, 방송 상태 바꾸기.
 //!
 //! 방송 상태는 "지금 상태가 X일 때만 Y로" 바꾸는 조건부 UPDATE 하나로 바꾼다.
 //! 상태와 그 시각은 같은 UPDATE에서 함께 정한다(DB의 CHECK 제약이 그렇게 요구한다).
@@ -8,34 +8,29 @@ use sqlx::PgPool;
 
 use crate::LiveStatus;
 
-/// 송출 키를 확인하고 송출을 받을지 정하는 데 필요한 정보.
+/// 소유자를 확인하고 송출을 받을지 정하는 데 필요한 정보.
 #[derive(Debug, sqlx::FromRow)]
 pub struct LiveAccess {
     pub status: LiveStatus,
-    pub stream_key_hash: Vec<u8>,
+    /// 소유자의 사용자 번호. 2단계에 만든 방송은 소유자가 없다.
+    pub owner_id: Option<i64>,
 }
 
 /// `owner_id`(사용자 번호)가 소유자인 라이브 방송을 준비 상태로 만들고 방송 번호를 돌려준다.
-pub async fn create(
-    pool: &PgPool,
-    owner_id: i64,
-    title: &str,
-    key_hash: &[u8],
-) -> Result<i64, sqlx::Error> {
+pub async fn create(pool: &PgPool, owner_id: i64, title: &str) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
-        "INSERT INTO broadcasts (title, kind, status, stream_key_hash, owner_id)
-         VALUES ($1, 'live', 'ready', $2, $3) RETURNING id",
+        "INSERT INTO broadcasts (title, kind, status, owner_id)
+         VALUES ($1, 'live', 'ready', $2) RETURNING id",
     )
     .bind(title)
-    .bind(key_hash)
     .bind(owner_id)
     .fetch_one(pool)
     .await
 }
 
-/// 방송 번호로 라이브 방송의 상태와 송출 키 해시를 찾는다. 없거나 녹화 방송이면 `None`.
+/// 방송 번호로 라이브 방송의 상태와 소유자를 찾는다. 없거나 녹화 방송이면 `None`.
 pub async fn find_access(pool: &PgPool, id: i64) -> Result<Option<LiveAccess>, sqlx::Error> {
-    sqlx::query_as("SELECT status, stream_key_hash FROM broadcasts WHERE id = $1 AND kind = 'live'")
+    sqlx::query_as("SELECT status, owner_id FROM broadcasts WHERE id = $1 AND kind = 'live'")
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -93,7 +88,7 @@ pub async fn abandon_stale(
     Ok(result.rows_affected())
 }
 
-/// 송출자의 종료 요청: 방송 중 → 종료, 준비 → 버려짐으로 바꾸고 종료 시각을 `now`로 남긴다.
+/// 소유자의 종료 요청: 방송 중 → 종료, 준비 → 버려짐으로 바꾸고 종료 시각을 `now`로 남긴다.
 ///
 /// 이미 종료됐거나 버려진 방송은 그대로 둔다.
 pub async fn end(pool: &PgPool, id: i64, now: DateTime<Utc>) -> Result<(), sqlx::Error> {

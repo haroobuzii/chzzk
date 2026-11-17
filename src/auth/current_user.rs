@@ -30,9 +30,6 @@ pub struct User {
     pub username: String,
 }
 
-// `require_owner`는 방송 관리 라우트(03·04 티켓)가 쓴다.
-// 그 전까지는 서버 빌드에서 쓰는 곳이 없어 경고가 나므로 끈다. 쓰기 시작하면 이 `allow`들을 지운다.
-#[allow(dead_code)]
 impl User {
     /// 이 사용자가 `owner_id`의 소유자인지 본다. 아니거나 소유자 없는 방송이면 403 응답.
     pub fn require_owner(&self, owner_id: Option<i64>) -> Result<(), Response> {

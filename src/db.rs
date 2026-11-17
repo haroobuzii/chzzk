@@ -117,8 +117,8 @@ mod tests {
         ended_at: Option<DateTime<Utc>>,
     ) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar(
-            "INSERT INTO broadcasts (title, kind, status, stream_key_hash, started_at, ended_at)
-             VALUES ('라이브', 'live', $1::live_status, sha256('키'::bytea), $2, $3) RETURNING id",
+            "INSERT INTO broadcasts (title, kind, status, started_at, ended_at)
+             VALUES ('라이브', 'live', $1::live_status, $2, $3) RETURNING id",
         )
         .bind(status)
         .bind(started_at)
@@ -198,8 +198,8 @@ mod tests {
     #[sqlx::test]
     async fn 라이브_방송에_영상_키가_있으면_DB가_거절한다(pool: PgPool) {
         let result = sqlx::query(
-            "INSERT INTO broadcasts (title, kind, status, stream_key_hash, video_key)
-             VALUES ('라이브', 'live', 'ready', sha256('키'::bytea), 'videos/1.mp4')",
+            "INSERT INTO broadcasts (title, kind, status, video_key)
+             VALUES ('라이브', 'live', 'ready', 'videos/1.mp4')",
         )
         .execute(&pool)
         .await;
@@ -223,24 +223,11 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn 라이브_방송에_송출_키_해시나_방송_상태가_없으면_DB가_거절한다(
-        pool: PgPool,
-    ) {
-        let no_hash = sqlx::query(
-            "INSERT INTO broadcasts (title, kind, status) VALUES ('라이브', 'live', 'ready')",
-        )
-        .execute(&pool)
-        .await;
-        assert!(
-            no_hash.is_err(),
-            "송출 키 해시가 없는 라이브 방송은 거절돼야 한다"
-        );
-
-        let no_status = sqlx::query(
-            "INSERT INTO broadcasts (title, kind, stream_key_hash) VALUES ('라이브', 'live', sha256('키'::bytea))",
-        )
-        .execute(&pool)
-        .await;
+    async fn 라이브_방송에_방송_상태가_없으면_DB가_거절한다(pool: PgPool) {
+        let no_status =
+            sqlx::query("INSERT INTO broadcasts (title, kind) VALUES ('라이브', 'live')")
+                .execute(&pool)
+                .await;
         assert!(
             no_status.is_err(),
             "방송 상태가 없는 라이브 방송은 거절돼야 한다"

@@ -6,15 +6,18 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 
+use crate::account::{call_api, use_login_state, LoginState};
 use crate::comments::CommentSection;
 use crate::display::{broadcast_duration, Mark};
 use crate::refresh::{sleep_ms, REFRESH_MS};
 use crate::{format_kst, get_broadcast, Broadcast, Route};
 
 /// 라이브 방송 상세: 방송 중이면 시청 화면, 종료면 종료 안내.
+/// 소유자에게는 방송 중일 때 "방송 종료" 버튼이 보인다.
 #[component]
 pub fn LiveDetail(broadcast: Broadcast) -> Element {
     let mut current = use_signal(|| broadcast.clone());
+    let login = use_login_state();
 
     // 5초마다 상태를 확인한다. 종료되면 더 묻지 않는다.
     use_effect(move || {
@@ -34,6 +37,19 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
 
     let broadcast = current();
     let shown_time = broadcast.shown_time();
+    let is_owner = matches!(
+        &*login.read(),
+        LoginState::User(name) if broadcast.owner.as_ref() == Some(name)
+    );
+    // 종료가 끝나면 바로 다시 불러와 종료 안내로 바꾼다(5초 확인을 기다리지 않는다).
+    let refresh = move |_| {
+        let id = current.peek().id;
+        spawn(async move {
+            if let Ok(Some(latest)) = get_broadcast(id).await {
+                current.set(latest);
+            }
+        });
+    };
     rsx! {
         article { class: "detail",
             if broadcast.mark() == Mark::Live {
@@ -52,6 +68,14 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
                 "{broadcast.title}"
             }
             p { class: "detail-owner", "{broadcast.owner_label()}" }
+            // 소유자만 보는 방송 관리 버튼들.
+            if is_owner {
+                div { class: "owner-actions",
+                    if broadcast.mark() == Mark::Live {
+                        EndLiveButton { id: broadcast.id, on_ended: refresh }
+                    }
+                }
+            }
             p { class: "card-time", "시작 {format_kst(&shown_time)}" }
             if let Some(ended_at) = broadcast.ended_at {
                 p { class: "card-time", "방송한 시간 {broadcast_duration(shown_time, ended_at)}" }
@@ -60,6 +84,40 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
         }
         // 방송 중이면 댓글을 3초마다 다시 불러온다. 종료된 방송에도 댓글을 쓸 수 있다.
         CommentSection { broadcast_id: broadcast.id, live: broadcast.mark() == Mark::Live }
+    }
+}
+
+/// 소유자의 "방송 종료" 버튼. 송출 화면을 닫았어도 여기서 끌 수 있다.
+#[component]
+fn EndLiveButton(id: i64, on_ended: EventHandler<()>) -> Element {
+    let mut pending = use_signal(|| false);
+    let mut error = use_signal(|| None::<String>);
+
+    let end = move |_| async move {
+        pending.set(true);
+        error.set(None);
+        match call_api("POST", &format!("/api/live/{id}/end"), None).await {
+            Ok((204, _)) => on_ended.call(()),
+            Ok((_, body)) => error.set(Some(
+                body["message"]
+                    .as_str()
+                    .unwrap_or("방송을 끝내지 못했어요. 다시 시도해 주세요.")
+                    .to_string(),
+            )),
+            Err(message) => error.set(Some(message)),
+        }
+        pending.set(false);
+    };
+
+    rsx! {
+        if pending() {
+            button { class: "button end-button", r#type: "button", disabled: true, "끝내는 중…" }
+        } else {
+            button { class: "button end-button", r#type: "button", onclick: end, "방송 종료" }
+        }
+        if let Some(message) = error() {
+            p { class: "error", role: "alert", "{message}" }
+        }
     }
 }
 

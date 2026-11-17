@@ -1,9 +1,8 @@
 //! 라이브 방송: 시작, 송출 연결(WHIP 중계), 상태 감시기.
 //!
-//! 휴대폰은 MediaMTX에 직접 닿지 않고 우리 서버를 거친다. 우리 서버가 송출 키를 확인한 뒤에만
-//! 요청을 MediaMTX에 넘긴다(ADR 0004, 0005).
+//! 휴대폰은 MediaMTX에 직접 닿지 않고 우리 서버를 거친다. 우리 서버가 로그인한 소유자인지 확인한 뒤에만
+//! 송출 요청을 MediaMTX에 넘긴다(ADR 0004, 0005).
 
-pub mod key;
 pub mod mediamtx;
 pub mod status_sync;
 pub mod store;
@@ -65,16 +64,16 @@ pub fn api(state: LiveState) -> Router {
         .with_state(state)
 }
 
-/// `POST /api/live/{번호}/end`: 송출 키를 확인한 뒤 방송을 끝낸다.
+/// `POST /api/live/{번호}/end`: 소유자인지 확인한 뒤 방송을 끝낸다.
 ///
 /// 방송 중이면 종료, 준비면 버려짐이 되고 204다. 이미 끝난 방송도 204이고 그대로 둔다.
 /// 그다음 MediaMTX의 송출 세션도 끊는다. 실패해도 무시한다(경로가 남아 있어도 상태는 되돌아가지 않는다).
 async fn end(
     State(state): State<LiveState>,
     Path(segment): Path<String>,
-    headers: HeaderMap,
+    current: CurrentUser,
 ) -> Response {
-    let id = match authorize(&state, &segment, &headers).await {
+    let id = match authorize(&state, &segment, current).await {
         Ok((id, _)) => id,
         Err(response) => return response,
     };
@@ -102,7 +101,7 @@ struct StartLive {
 /// `POST /api/live`: JSON `{title}`로 라이브 방송을 준비 상태로 만든다.
 ///
 /// 로그인이 필요하다(비로그인은 401). 로그인한 사용자가 소유자가 된다.
-/// 성공하면 201과 `{id, key}`를 준다. 송출 키 원문은 이 응답에만 담기고 DB에는 해시만 남는다.
+/// 성공하면 201과 `{id}`를 준다. 송출과 종료는 이 소유자만 할 수 있다.
 async fn start(State(state): State<LiveState>, current: CurrentUser, body: Bytes) -> Response {
     let owner = match current.require() {
         Ok(user) => user,
@@ -116,9 +115,8 @@ async fn start(State(state): State<LiveState>, current: CurrentUser, body: Bytes
         Err(e) => return bad_request(e.code(), e.message()),
     };
 
-    let key = key::generate();
-    match store::create(&state.pool, owner.id, &title, &key::hash(&key)).await {
-        Ok(id) => (StatusCode::CREATED, Json(json!({ "id": id, "key": key }))).into_response(),
+    match store::create(&state.pool, owner.id, &title).await {
+        Ok(id) => (StatusCode::CREATED, Json(json!({ "id": id }))).into_response(),
         Err(e) => {
             dioxus::logger::tracing::error!("라이브 방송 시작 실패: {e}");
             failure(
@@ -130,16 +128,17 @@ async fn start(State(state): State<LiveState>, current: CurrentUser, body: Bytes
     }
 }
 
-/// `POST /api/live/{번호}/whip`: 송출 키를 확인한 뒤 SDP offer를 MediaMTX에 넘기고 answer를 돌려준다.
+/// `POST /api/live/{번호}/whip`: 소유자인지 확인한 뒤 SDP offer를 MediaMTX에 넘기고 answer를 돌려준다.
 ///
 /// `Location`(세션 주소)은 우리 서버의 `/api/live/{번호}/whip/{세션}`으로 바꾼다.
 async fn publish(
     State(state): State<LiveState>,
     Path(segment): Path<String>,
+    current: CurrentUser,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let (id, access) = match authorize(&state, &segment, &headers).await {
+    let (id, access) = match authorize(&state, &segment, current).await {
         Ok(found) => found,
         Err(response) => return response,
     };
@@ -154,20 +153,21 @@ async fn publish(
     relay_offer(&state, id, Relay::Whip, &headers, body).await
 }
 
-/// `PATCH`·`DELETE /api/live/{번호}/whip/{세션}`: 송출 키를 확인한 뒤 송출 세션 요청을 MediaMTX에 넘긴다.
+/// `PATCH`·`DELETE /api/live/{번호}/whip/{세션}`: 소유자인지 확인한 뒤 송출 세션 요청을 MediaMTX에 넘긴다.
 ///
 /// PATCH는 ICE 후보 추가, DELETE는 연결 끊기다. 방송 상태와 상관없이 넘긴다.
 async fn publish_session(
     State(state): State<LiveState>,
     Path((segment, session)): Path<(String, String)>,
     method: Method,
+    current: CurrentUser,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     if !is_session_id(&session) {
         return not_found();
     }
-    let id = match authorize(&state, &segment, &headers).await {
+    let id = match authorize(&state, &segment, current).await {
         Ok((id, _)) => id,
         Err(response) => return response,
     };
@@ -191,34 +191,17 @@ async fn find_live(state: &LiveState, segment: &str) -> Result<(i64, LiveAccess)
     Ok((id, access))
 }
 
-/// 방송 번호와 송출 키를 확인한다.
+/// 방송 번호와 소유자를 확인한다.
 ///
-/// 번호가 아니거나 라이브 방송이 없으면 404, 키가 없거나 틀리면 401이다.
+/// 번호가 아니거나 라이브 방송이 없으면 404, 비로그인이면 401, 소유자가 아니면 403이다.
 async fn authorize(
     state: &LiveState,
     segment: &str,
-    headers: &HeaderMap,
+    current: CurrentUser,
 ) -> Result<(i64, LiveAccess), Response> {
     let (id, access) = find_live(state, segment).await?;
-    let given = bearer(headers).unwrap_or("");
-    if given.is_empty() || !key::matches(given, &access.stream_key_hash) {
-        return Err(failure(
-            StatusCode::UNAUTHORIZED,
-            "bad_stream_key",
-            "송출 키가 맞지 않아요. 이 방송을 시작한 화면에서만 송출할 수 있어요.",
-        ));
-    }
+    current.require()?.require_owner(access.owner_id)?;
     Ok((id, access))
-}
-
-/// `Authorization: Bearer <송출 키>`에서 키를 꺼낸다.
-fn bearer(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .map(str::trim)
 }
 
 /// MediaMTX의 세션 비밀값 모양(UUID)인지 본다. 그 밖의 값은 MediaMTX의 다른 주소로 새지 않게 막는다.
@@ -315,7 +298,7 @@ async fn relay_session(
     finish(response, upstream).await
 }
 
-/// 요청 헤더 중 `pass`에 있는 것만 담아 MediaMTX에 넘긴다. 송출 키는 넘기지 않는다.
+/// 요청 헤더 중 `pass`에 있는 것만 담아 MediaMTX에 넘긴다. 로그인 쿠키는 넘기지 않는다.
 async fn forward(
     state: &LiveState,
     method: Method,

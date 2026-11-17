@@ -23,7 +23,7 @@ async fn 방송_중이면_키_없이_offer가_넘어가고_answer와_우리_서�
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (id, _) = app.go_live("시청", at(0)).await;
+    let id = app.go_live("시청", at(0)).await;
 
     let response = app.request(whep_request(id)).await;
 
@@ -44,8 +44,8 @@ async fn 방송_중이면_키_없이_offer가_넘어가고_answer와_우리_서�
 }
 
 /// 종료 API(`POST /api/live/{번호}/end`)로 방송을 끝낸다.
-async fn end_live(app: &LiveApp, id: i64, key: &str) {
-    let response = app.request(end_request(id, Some(key))).await;
+async fn end_live(app: &LiveApp, id: i64) {
+    let response = app.request(end_request(id)).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
 
@@ -54,9 +54,9 @@ async fn 준비나_종료된_방송을_시청하면_409이고_MediaMTX에_넘기
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (ready, _) = app.start_live("준비").await;
-    let (ended, key) = app.go_live("종료", at(0)).await;
-    end_live(&app, ended, &key).await;
+    let ready = app.start_live("준비").await;
+    let ended = app.go_live("종료", at(0)).await;
+    end_live(&app, ended).await;
 
     for id in [ready, ended] {
         let response = app.request(whep_request(id)).await;
@@ -86,18 +86,14 @@ async fn 없는_번호나_녹화_방송을_시청하면_404다(pool: PgPool) {
 #[sqlx::test]
 async fn 시청_세션의_PATCH와_DELETE는_키_없이_넘어간다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.go_live("세션", at(0)).await;
+    let id = app.go_live("세션", at(0)).await;
     let session = format!("/api/live/{id}/whep/{FAKE_SECRET}");
 
-    let response = app
-        .request(session_request(Method::PATCH, &session, None))
-        .await;
+    let response = app.request(session_request(Method::PATCH, &session)).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     // 방송이 끝난 뒤에도 연결을 끊을 수 있다.
-    end_live(&app, id, &key).await;
-    let response = app
-        .request(session_request(Method::DELETE, &session, None))
-        .await;
+    end_live(&app, id).await;
+    let response = app.request(session_request(Method::DELETE, &session)).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     let sent = app.fake.webrtc_requests();
@@ -118,16 +114,14 @@ async fn 시청_세션_주소가_이상하거나_없는_방송이면_넘기지_�
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (id, _) = app.go_live("세션", at(0)).await;
+    let id = app.go_live("세션", at(0)).await;
     let before = app.fake.requests().len();
 
     for path in [
         format!("/api/live/{id}/whep/..%2F..%2Fv3%2Fconfig"),
         format!("/api/live/9999/whep/{FAKE_SECRET}"),
     ] {
-        let response = app
-            .request(session_request(Method::DELETE, &path, None))
-            .await;
+        let response = app.request(session_request(Method::DELETE, &path)).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
     }
     assert_eq!(app.fake.requests().len(), before);
@@ -143,10 +137,10 @@ async fn 녹화_방송_중_종료가_섞인_목록이_최신순으로_표시와_
 
     let app = LiveApp::new(pool).await;
     insert_recorded(&app.pool, "옛 녹화", at(1)).await;
-    let (ended, key) = app.go_live("끝난 라이브", at(10)).await;
-    end_live(&app, ended, &key).await;
+    let ended = app.go_live("끝난 라이브", at(10)).await;
+    end_live(&app, ended).await;
     insert_recorded(&app.pool, "새 녹화", at(30)).await;
-    let (_live, _) = app.go_live("지금 라이브", at(40)).await;
+    let _live = app.go_live("지금 라이브", at(40)).await;
     // 준비 상태는 목록에 나오지 않는다.
     app.start_live("준비").await;
 
@@ -169,7 +163,7 @@ async fn 녹화_방송_중_종료가_섞인_목록이_최신순으로_표시와_
 #[sqlx::test]
 async fn MediaMTX가_시청을_거절하면_502다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, _) = app.go_live("거절", at(0)).await;
+    let id = app.go_live("거절", at(0)).await;
     app.fake.set_unreachable(true);
 
     let response = app.request(whep_request(id)).await;

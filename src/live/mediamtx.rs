@@ -40,7 +40,7 @@ impl MediaMtx {
 
     /// WebRTC HTTP 주소의 `path`(예: `/live/3/whip`)로 요청을 그대로 넘긴다.
     ///
-    /// `headers`에는 넘길 헤더만 담아 온다(Content-Type, If-Match 등). 송출 키는 넘기지 않는다.
+    /// `headers`에는 넘길 헤더만 담아 온다(Content-Type, If-Match 등). 로그인 쿠키는 넘기지 않는다.
     pub async fn forward(
         &self,
         method: Method,

@@ -2,7 +2,7 @@
 //!
 //! 카메라와 WebRTC는 브라우저 JavaScript(`PUBLISHER_JS`)가 다룬다. Rust 쪽은 `document::eval`로
 //! 명령을 하나씩 보내고, 결과는 `dioxus.send`로 받는다.
-//! 송출 키는 JavaScript 쪽 메모리(`window.chzzkPublisher`)에만 두고 브라우저 저장소에 두지 않는다.
+//! 송출과 종료 요청에는 따로 열쇠를 싣지 않는다. 같은 출처 요청이라 로그인 쿠키가 실리고, 서버가 소유자인지 확인한다.
 
 use dioxus::prelude::*;
 use serde::Deserialize;
@@ -361,11 +361,12 @@ async fn run_for_id(body: &str) -> Result<i64, String> {
 /// - `describe(error)`: 에러를 `{ code }`(브라우저에서 생긴 실패) 또는 `{ message }`(서버가 준 문구)로 바꾼다.
 ///   코드를 한국어 안내로 바꾸는 일은 Rust 쪽 `Failure::message`가 한다.
 ///
-/// 상태(`stream`, `pc`, `id`, `key`, `session`, `listener` 등)는 객체 안에 둔다. 송출 키는 여기에만 있다.
+/// 상태(`stream`, `pc`, `id`, `session`, `listener` 등)는 객체 안에 둔다.
+/// 송출·종료 요청은 같은 출처 요청이라 로그인 쿠키가 실리고, 서버가 소유자인지 확인한다.
 const PUBLISHER_JS: &str = r#"
 window.chzzkPublisher ??= (() => {
   const state = {
-    stream: null, pc: null, video: null, id: null, key: null, session: null, facing: "environment",
+    stream: null, pc: null, video: null, id: null, session: null, facing: "environment",
     videoSender: null, wakeLock: null, wantWakeLock: false, listener: null,
   };
 
@@ -422,7 +423,6 @@ window.chzzkPublisher ??= (() => {
     const body = await res.json().catch(() => ({}));
     if (res.status !== 201) fail(body.message || "방송을 시작하지 못했어요. 다시 시도해 주세요.");
     state.id = body.id;
-    state.key = body.key;
   }
 
   function waitIceGathering(pc) {
@@ -470,12 +470,12 @@ window.chzzkPublisher ??= (() => {
 
     const res = await fetch(`/api/live/${state.id}/whip`, {
       method: "POST",
-      headers: { "Content-Type": "application/sdp", Authorization: `Bearer ${state.key}` },
+      headers: { "Content-Type": "application/sdp" },
       body: pc.localDescription.sdp,
     }).catch(() => { throw connectFailed(); });
     if (res.status !== 201) {
       // 5xx(MediaMTX에 닿지 못함 등)는 연결 실패로 보고 같은 와이파이인지 확인하라고 안내한다.
-      // 4xx는 서버가 거절한 이유(키 불일치, 이미 끝난 방송 등)를 그대로 보여 준다.
+      // 4xx는 서버가 거절한 이유(로그인 필요, 이미 끝난 방송 등)를 그대로 보여 준다.
       const body = res.status < 500 ? await res.json().catch(() => ({})) : {};
       if (body.message) fail(body.message);
       throw connectFailed();
@@ -620,15 +620,13 @@ window.chzzkPublisher ??= (() => {
     state.stream?.getTracks().forEach((t) => t.stop());
     state.stream = null;
     state.id = null;
-    state.key = null;
   }
 
   // 종료 API를 부른다. 실패해도 상태 감시기가 경로가 사라진 것을 보고 끝내므로 결과는 보지 않는다.
   function requestEnd(keepalive) {
-    if (state.id == null || !state.key) return Promise.resolve();
+    if (state.id == null) return Promise.resolve();
     return fetch(`/api/live/${state.id}/end`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${state.key}` },
       keepalive,
     }).catch(() => {});
   }

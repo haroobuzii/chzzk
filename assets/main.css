@@ -508,3 +508,16 @@ h1 {
     border: none;
     cursor: pointer;
 }
+
+/* 상세 화면에서 소유자만 보는 방송 관리 버튼들("방송 종료", "제목 수정", "삭제"). */
+.owner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.owner-actions .end-button {
+    margin-top: 0;
+}

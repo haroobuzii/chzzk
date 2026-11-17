@@ -61,18 +61,13 @@ impl LiveApp {
         self.router.clone().oneshot(request).await.unwrap()
     }
 
-    /// 라이브 방송을 시작하고 `(번호, 송출 키)`를 돌려준다.
-    pub async fn start_live(&self, title: &str) -> (i64, String) {
+    /// 테스트 사용자로 라이브 방송을 시작하고 방송 번호를 돌려준다. 그 사용자가 소유자다.
+    pub async fn start_live(&self, title: &str) -> i64 {
         let response = self.request(start_request(title)).await;
         assert_eq!(response.status(), StatusCode::CREATED);
-        let json = body_json(response).await;
-        (
-            json["id"].as_i64().expect("응답에 방송 번호가 있어야 한다"),
-            json["key"]
-                .as_str()
-                .expect("응답에 송출 키가 있어야 한다")
-                .to_string(),
-        )
+        body_json(response).await["id"]
+            .as_i64()
+            .expect("응답에 방송 번호가 있어야 한다")
     }
 
     /// 상태 감시기를 한 번 돌린다.
@@ -83,11 +78,11 @@ impl LiveApp {
     }
 
     /// 방송을 시작하고 영상이 들어온 것처럼 만들어 방송 중으로 바꾼다.
-    pub async fn go_live(&self, title: &str, now: DateTime<Utc>) -> (i64, String) {
-        let (id, key) = self.start_live(title).await;
+    pub async fn go_live(&self, title: &str, now: DateTime<Utc>) -> i64 {
+        let id = self.start_live(title).await;
         self.fake.set_online(&[&format!("live/{id}")]);
         self.sync(now).await;
-        (id, key)
+        id
     }
 }
 
@@ -100,24 +95,19 @@ pub fn start_request(title: &str) -> Request<Body> {
         .unwrap()
 }
 
-/// 송출 연결 요청. `key`가 `None`이면 Authorization 헤더를 넣지 않는다.
-pub fn whip_request(id: i64, key: Option<&str>) -> Request<Body> {
-    let mut builder = Request::post(format!("/api/live/{id}/whip"))
-        .header(header::CONTENT_TYPE, "application/sdp");
-    if let Some(key) = key {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {key}"));
-    }
-    builder.body(Body::from(OFFER)).unwrap()
+/// 송출 연결 요청. 누가 보내는지는 [`LiveApp::request`]·[`LiveApp::request_as`]가 정한다.
+pub fn whip_request(id: i64) -> Request<Body> {
+    Request::post(format!("/api/live/{id}/whip"))
+        .header(header::CONTENT_TYPE, "application/sdp")
+        .body(Body::from(OFFER))
+        .unwrap()
 }
 
 /// 송출 세션 요청(PATCH·DELETE).
-pub fn session_request(method: Method, path: &str, key: Option<&str>) -> Request<Body> {
+pub fn session_request(method: Method, path: &str) -> Request<Body> {
     let mut builder = Request::builder().method(method.clone()).uri(path);
     if method == Method::PATCH {
         builder = builder.header(header::CONTENT_TYPE, "application/trickle-ice-sdpfrag");
-    }
-    if let Some(key) = key {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {key}"));
     }
     let body = if method == Method::PATCH {
         "a=candidate:1 1 udp 1 192.0.2.1 5000 typ host\r\n"
@@ -141,14 +131,13 @@ pub async fn body_json(response: Response) -> serde_json::Value {
 // ── 라이브 시작 ──
 
 #[sqlx::test]
-async fn 라이브를_시작하면_201과_번호_송출_키가_오고_아직_목록과_조회에_없다(
+async fn 라이브를_시작하면_201과_번호가_오고_아직_목록과_조회에_없다(
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
 
-    let (id, key) = app.start_live("첫 라이브").await;
+    let id = app.start_live("첫 라이브").await;
 
-    assert!(!key.is_empty());
     assert_eq!(crate::db::list_broadcasts(&app.pool).await.unwrap(), vec![]);
     assert_eq!(
         crate::db::find_broadcast(&app.pool, id).await.unwrap(),
@@ -157,28 +146,28 @@ async fn 라이브를_시작하면_201과_번호_송출_키가_오고_아직_목
 }
 
 #[sqlx::test]
-async fn DB에는_송출_키_원문이_남지_않는다(pool: PgPool) {
+async fn 라이브_시작_응답과_DB에_송출_키가_없다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
 
-    let (id, key) = app.start_live("키 확인").await;
+    let response = app.request(start_request("키 없음")).await;
 
-    // 방송 행의 모든 칸을 글자로 바꿔도 원문이 보이지 않아야 한다.
-    let row: String = sqlx::query_scalar("SELECT b::text FROM broadcasts b WHERE id = $1")
-        .bind(id)
-        .fetch_one(&app.pool)
-        .await
-        .unwrap();
-    assert!(!row.contains(&key), "DB에 송출 키 원문이 있다: {row}");
-}
-
-#[sqlx::test]
-async fn 송출_키는_방송마다_다르다(pool: PgPool) {
-    let app = LiveApp::new(pool).await;
-
-    let (_, a) = app.start_live("하나").await;
-    let (_, b) = app.start_live("둘").await;
-
-    assert_ne!(a, b);
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let json = body_json(response).await;
+    let fields: Vec<&String> = json.as_object().unwrap().keys().collect();
+    assert_eq!(fields, ["id"]);
+    // 송출 키 칸이 없어졌는지는 공개 API로 볼 수 없으므로 DB의 칸 목록을 직접 본다(ADR 0005).
+    let columns: Vec<String> = sqlx::query_scalar(
+        "SELECT column_name::text FROM information_schema.columns WHERE table_name = 'broadcasts'",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert!(
+        !columns
+            .iter()
+            .any(|c| c.contains("key") && c != "video_key"),
+        "송출 키 칸이 남아 있다: {columns:?}"
+    );
 }
 
 #[sqlx::test]
@@ -260,33 +249,35 @@ async fn 로그인한_사용자가_시작한_라이브_방송의_소유자는_�
 // ── 송출 연결 ──
 
 #[sqlx::test]
-async fn 송출_키가_없거나_틀리면_401이고_MediaMTX에_넘기지_않는다(pool: PgPool) {
-    let app = LiveApp::new(pool).await;
-    let (id, _key) = app.start_live("키 없음").await;
+async fn 비로그인은_401_다른_사용자는_403으로_송출하지_못하고_MediaMTX에_넘기지_않는다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool.clone()).await;
+    let id = app.start_live("남의 방송").await;
+    let other = Persona::user_b(&pool).await;
 
-    let response = app.request(whip_request(id, None)).await;
+    let response = app
+        .request_as(&Persona::anonymous(), whip_request(id))
+        .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    assert!(body_json(response).await["message"].is_string());
+    assert_eq!(body_json(response).await["code"], "login_required");
 
-    let response = app.request(whip_request(id, Some("틀린키"))).await;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-
-    // 다른 방송의 키도 틀린 키다.
-    let (_, other_key) = app.start_live("다른 방송").await;
-    let response = app.request(whip_request(id, Some(&other_key))).await;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = app.request_as(&other, whip_request(id)).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body_json(response).await["code"], "forbidden");
 
     assert!(app.fake.requests().is_empty());
+    assert_eq!(status_of(&app, id).await, LiveStatus::Ready);
 }
 
 #[sqlx::test]
-async fn 맞는_키면_offer가_넘어가고_answer와_우리_서버의_세션_주소가_온다(
+async fn 소유자면_offer가_넘어가고_answer와_우리_서버의_세션_주소가_온다(
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.start_live("송출").await;
+    let id = app.start_live("송출").await;
 
-    let response = app.request(whip_request(id, Some(&key))).await;
+    let response = app.request(whip_request(id)).await;
 
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(response.headers()[header::CONTENT_TYPE], "application/sdp");
@@ -302,21 +293,20 @@ async fn 맞는_키면_offer가_넘어가고_answer와_우리_서버의_세션_�
     assert_eq!(sent[0].path, format!("/live/{id}/whip"));
     assert_eq!(sent[0].headers[header::CONTENT_TYPE], "application/sdp");
     assert_eq!(sent[0].body, OFFER);
-    // 송출 키는 MediaMTX에 넘기지 않는다.
-    assert!(sent[0].headers.get(header::AUTHORIZATION).is_none());
+    // 로그인 쿠키는 MediaMTX에 넘기지 않는다.
+    assert!(sent[0].headers.get(header::COOKIE).is_none());
 }
 
 #[sqlx::test]
 async fn 없는_번호로_송출하면_404다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (_, key) = app.start_live("있는 방송").await;
+    app.start_live("있는 방송").await;
 
     assert_eq!(
-        app.request(whip_request(9999, Some(&key))).await.status(),
+        app.request(whip_request(9999)).await.status(),
         StatusCode::NOT_FOUND
     );
     let not_number = Request::post("/api/live/abc/whip")
-        .header(header::AUTHORIZATION, format!("Bearer {key}"))
         .body(Body::from(OFFER))
         .unwrap();
     assert_eq!(
@@ -329,7 +319,7 @@ async fn 없는_번호로_송출하면_404다(pool: PgPool) {
 #[sqlx::test]
 async fn 녹화_방송_번호로_송출하면_404다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (_, key) = app.start_live("라이브").await;
+    app.start_live("라이브").await;
     let recorded: i64 = sqlx::query_scalar(
         "INSERT INTO broadcasts (title, video_key) VALUES ('녹화', 'videos/x.mp4') RETURNING id",
     )
@@ -338,9 +328,7 @@ async fn 녹화_방송_번호로_송출하면_404다(pool: PgPool) {
     .unwrap();
 
     assert_eq!(
-        app.request(whip_request(recorded, Some(&key)))
-            .await
-            .status(),
+        app.request(whip_request(recorded)).await.status(),
         StatusCode::NOT_FOUND
     );
 }
@@ -348,10 +336,10 @@ async fn 녹화_방송_번호로_송출하면_404다(pool: PgPool) {
 #[sqlx::test]
 async fn 준비가_아닌_방송에_송출하면_409다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.go_live("이미 방송 중", at(0)).await;
+    let id = app.go_live("이미 방송 중", at(0)).await;
     let before = app.fake.webrtc_requests().len();
 
-    let response = app.request(whip_request(id, Some(&key))).await;
+    let response = app.request(whip_request(id)).await;
 
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert!(body_json(response).await["message"].is_string());
@@ -359,28 +347,30 @@ async fn 준비가_아닌_방송에_송출하면_409다(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn 세션_PATCH와_DELETE도_송출_키를_확인한다(pool: PgPool) {
-    let app = LiveApp::new(pool).await;
-    let (id, key) = app.start_live("세션").await;
+async fn 세션_PATCH와_DELETE도_소유자만_된다(pool: PgPool) {
+    let app = LiveApp::new(pool.clone()).await;
+    let id = app.start_live("세션").await;
     let session = format!("/api/live/{id}/whip/{FAKE_SECRET}");
+    let other = Persona::user_b(&pool).await;
 
     for method in [Method::PATCH, Method::DELETE] {
-        for wrong in [None, Some("틀린키")] {
-            let response = app
-                .request(session_request(method.clone(), &session, wrong))
-                .await;
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method}");
-        }
+        let response = app
+            .request_as(
+                &Persona::anonymous(),
+                session_request(method.clone(), &session),
+            )
+            .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method}");
+        let response = app
+            .request_as(&other, session_request(method.clone(), &session))
+            .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method}");
     }
     assert!(app.fake.requests().is_empty());
 
-    let response = app
-        .request(session_request(Method::PATCH, &session, Some(&key)))
-        .await;
+    let response = app.request(session_request(Method::PATCH, &session)).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    let response = app
-        .request(session_request(Method::DELETE, &session, Some(&key)))
-        .await;
+    let response = app.request(session_request(Method::DELETE, &session)).await;
     assert_eq!(response.status(), StatusCode::OK);
 
     let sent = app.fake.webrtc_requests();
@@ -399,12 +389,10 @@ async fn 세션_PATCH와_DELETE도_송출_키를_확인한다(pool: PgPool) {
 #[sqlx::test]
 async fn 세션_주소가_이상하면_넘기지_않고_404다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.start_live("세션").await;
+    let id = app.start_live("세션").await;
 
     let path = format!("/api/live/{id}/whip/..%2F..%2Fv3%2Fconfig");
-    let response = app
-        .request(session_request(Method::DELETE, &path, Some(&key)))
-        .await;
+    let response = app.request(session_request(Method::DELETE, &path)).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert!(app.fake.requests().is_empty());
 }
@@ -414,10 +402,10 @@ async fn MediaMTX가_실패하면_그_상태를_알리고_방송은_준비로_�
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.start_live("실패").await;
+    let id = app.start_live("실패").await;
     app.fake.set_unreachable(true);
 
-    let response = app.request(whip_request(id, Some(&key))).await;
+    let response = app.request(whip_request(id)).await;
 
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     assert!(body_json(response).await["message"].is_string());
@@ -434,7 +422,7 @@ async fn 경로에_영상이_들어오면_방송_중이_되고_시작_시각이_
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (id, _) = app.start_live("방송 중으로").await;
+    let id = app.start_live("방송 중으로").await;
     app.fake.set_online(&[&format!("live/{id}")]);
 
     app.sync(at(7)).await;
@@ -455,8 +443,8 @@ async fn 경로에_영상이_들어오면_방송_중이_되고_시작_시각이_
 #[sqlx::test]
 async fn 영상이_들어오지_않은_방송은_준비로_남는다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (waiting, _) = app.start_live("기다림").await;
-    let (online, _) = app.start_live("들어옴").await;
+    let waiting = app.start_live("기다림").await;
+    let online = app.start_live("들어옴").await;
     app.fake.set_online(&[&format!("live/{online}")]);
 
     app.sync(at(3)).await;
@@ -476,7 +464,7 @@ async fn 이미_방송_중이면_다시_맞춰도_시작_시각이_바뀌지_않
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (id, _) = app.go_live("그대로", at(1)).await;
+    let id = app.go_live("그대로", at(1)).await;
 
     app.sync(at(9)).await;
 
@@ -492,7 +480,7 @@ async fn MediaMTX에_닿지_못하면_맞추기는_실패하고_아무것도_바
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (id, _) = app.start_live("그대로").await;
+    let id = app.start_live("그대로").await;
     app.fake.set_online(&[&format!("live/{id}")]);
     app.fake.set_unreachable(true);
 
@@ -507,13 +495,11 @@ async fn MediaMTX에_닿지_못하면_맞추기는_실패하고_아무것도_바
 
 // ── 방송 종료 ──
 
-/// 종료 요청. `key`가 `None`이면 Authorization 헤더를 넣지 않는다.
-pub fn end_request(id: i64, key: Option<&str>) -> Request<Body> {
-    let mut builder = Request::post(format!("/api/live/{id}/end"));
-    if let Some(key) = key {
-        builder = builder.header(header::AUTHORIZATION, format!("Bearer {key}"));
-    }
-    builder.body(Body::empty()).unwrap()
+/// 종료 요청. 누가 보내는지는 [`LiveApp::request`]·[`LiveApp::request_as`]가 정한다.
+pub fn end_request(id: i64) -> Request<Body> {
+    Request::post(format!("/api/live/{id}/end"))
+        .body(Body::empty())
+        .unwrap()
 }
 
 /// 저장소에서 본 방송 상태. 준비·버려짐은 조회 함수에 나오지 않으므로 이것으로 본다.
@@ -526,14 +512,14 @@ async fn status_of(app: &LiveApp, id: i64) -> LiveStatus {
 }
 
 #[sqlx::test]
-async fn 맞는_키로_종료하면_204이고_종료가_되며_종료_시각이_생긴다(
+async fn 소유자가_종료하면_204이고_종료가_되며_종료_시각이_생긴다(
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.go_live("끝낼 방송", at(1)).await;
+    let id = app.go_live("끝낼 방송", at(1)).await;
     let before = Utc::now();
 
-    let response = app.request(end_request(id, Some(&key))).await;
+    let response = app.request(end_request(id)).await;
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     let found = crate::db::find_broadcast(&app.pool, id)
@@ -547,25 +533,32 @@ async fn 맞는_키로_종료하면_204이고_종료가_되며_종료_시각이_
 }
 
 #[sqlx::test]
-async fn 틀린_키로_종료하면_401이고_상태는_그대로다(pool: PgPool) {
-    let app = LiveApp::new(pool).await;
-    let (id, _) = app.go_live("그대로", at(1)).await;
+async fn 비로그인은_401_다른_사용자는_403으로_종료하지_못하고_상태는_그대로다(
+    pool: PgPool,
+) {
+    let app = LiveApp::new(pool.clone()).await;
+    let id = app.go_live("그대로", at(1)).await;
+    let other = Persona::user_b(&pool).await;
+    let before = app.fake.requests().len();
 
-    for key in [None, Some("틀린-키")] {
-        let response = app.request(end_request(id, key)).await;
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert!(body_json(response).await["message"].is_string());
-    }
+    let response = app.request_as(&Persona::anonymous(), end_request(id)).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(body_json(response).await["message"].is_string());
+    let response = app.request_as(&other, end_request(id)).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(body_json(response).await["message"].is_string());
 
     assert_eq!(status_of(&app, id).await, LiveStatus::Live);
+    // 송출 세션 끊기 요청도 가지 않는다.
+    assert_eq!(app.fake.requests().len(), before);
 }
 
 #[sqlx::test]
 async fn 준비_중에_종료하면_버려지고_조회되지_않는다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.start_live("영상 없이 끝").await;
+    let id = app.start_live("영상 없이 끝").await;
 
-    let response = app.request(end_request(id, Some(&key))).await;
+    let response = app.request(end_request(id)).await;
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert_eq!(status_of(&app, id).await, LiveStatus::Abandoned);
@@ -578,15 +571,15 @@ async fn 준비_중에_종료하면_버려지고_조회되지_않는다(pool: Pg
 #[sqlx::test]
 async fn 두_번_종료해도_204이고_종료_시각은_처음_그대로다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.go_live("두 번", at(1)).await;
-    app.request(end_request(id, Some(&key))).await;
+    let id = app.go_live("두 번", at(1)).await;
+    app.request(end_request(id)).await;
     let first = crate::db::find_broadcast(&app.pool, id)
         .await
         .unwrap()
         .unwrap()
         .ended_at;
 
-    let response = app.request(end_request(id, Some(&key))).await;
+    let response = app.request(end_request(id)).await;
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     let found = crate::db::find_broadcast(&app.pool, id)
@@ -601,7 +594,7 @@ async fn 두_번_종료해도_204이고_종료_시각은_처음_그대로다(poo
 async fn 없는_번호를_종료하면_404다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
 
-    let response = app.request(end_request(424242, Some("아무-키"))).await;
+    let response = app.request(end_request(424242)).await;
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
@@ -609,9 +602,9 @@ async fn 없는_번호를_종료하면_404다(pool: PgPool) {
 #[sqlx::test]
 async fn 종료하면_MediaMTX의_송출_세션을_끊는다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.go_live("끊기", at(1)).await;
+    let id = app.go_live("끊기", at(1)).await;
 
-    app.request(end_request(id, Some(&key))).await;
+    app.request(end_request(id)).await;
 
     let kicked = app.fake.requests().into_iter().any(|r| {
         r.method == Method::POST && r.path == format!("/v3/webrtc/sessions/kick/{FAKE_SESSION_ID}")
@@ -622,10 +615,10 @@ async fn 종료하면_MediaMTX의_송출_세션을_끊는다(pool: PgPool) {
 #[sqlx::test]
 async fn MediaMTX가_고장이어도_종료는_204이고_종료가_된다(pool: PgPool) {
     let app = LiveApp::new(pool).await;
-    let (id, key) = app.go_live("고장", at(1)).await;
+    let id = app.go_live("고장", at(1)).await;
     app.fake.set_unreachable(true);
 
-    let response = app.request(end_request(id, Some(&key))).await;
+    let response = app.request(end_request(id)).await;
 
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert_eq!(status_of(&app, id).await, LiveStatus::Ended);
@@ -638,8 +631,8 @@ async fn 경로가_사라지면_방송_중이_종료가_되고_종료_시각이_
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (gone, _) = app.go_live("사라짐", at(1)).await;
-    let (still, _) = app.start_live("계속").await;
+    let gone = app.go_live("사라짐", at(1)).await;
+    let still = app.start_live("계속").await;
     app.fake
         .set_online(&[&format!("live/{gone}"), &format!("live/{still}")]);
     app.sync(at(2)).await;
@@ -664,7 +657,7 @@ async fn 준비로_30초가_지나도록_영상이_없으면_버려지고_그_�
 ) {
     let app = LiveApp::new(pool).await;
     let started = Utc::now();
-    let (id, _) = app.start_live("안 옴").await;
+    let id = app.start_live("안 옴").await;
 
     app.sync(started + chrono::Duration::seconds(20)).await;
     assert_eq!(status_of(&app, id).await, LiveStatus::Ready);
@@ -678,10 +671,10 @@ async fn 종료된_방송은_경로가_다시_나타나도_방송_중이_되지_
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (ended, key) = app.go_live("끝남", at(1)).await;
-    app.request(end_request(ended, Some(&key))).await;
-    let (abandoned, key) = app.start_live("버려짐").await;
-    app.request(end_request(abandoned, Some(&key))).await;
+    let ended = app.go_live("끝남", at(1)).await;
+    app.request(end_request(ended)).await;
+    let abandoned = app.start_live("버려짐").await;
+    app.request(end_request(abandoned)).await;
 
     app.fake
         .set_online(&[&format!("live/{ended}"), &format!("live/{abandoned}")]);
@@ -696,8 +689,8 @@ async fn 같은_DB에_새로_연결해도_라이브_방송의_상태와_시각�
     pool: PgPool,
 ) {
     let app = LiveApp::new(pool).await;
-    let (live, _) = app.go_live("방송 중", at(1)).await;
-    let (ended, _) = app.start_live("끝난 방송").await;
+    let live = app.go_live("방송 중", at(1)).await;
+    let ended = app.start_live("끝난 방송").await;
     app.fake
         .set_online(&[&format!("live/{live}"), &format!("live/{ended}")]);
     app.sync(at(2)).await;
