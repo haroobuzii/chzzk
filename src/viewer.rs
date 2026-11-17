@@ -1,4 +1,4 @@
-//! 라이브 방송 시청 화면: WHEP으로 받은 영상을 띄우고, 5초마다 상태를 확인해 종료를 알린다.
+//! 라이브 방송 시청 화면: WHEP으로 받은 영상을 띄우고, 5초마다 상태를 확인해 제목 변경과 종료, 삭제를 반영한다.
 //!
 //! WebRTC는 브라우저 JavaScript(`VIEWER_JS`)가 다룬다. Rust 쪽은 `document::eval`로 명령을 보내고,
 //! 결과는 `dioxus.send`로 받는다.
@@ -6,41 +6,50 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 
-use crate::account::{call_api, use_login_state, LoginState};
+use crate::account::call_api;
 use crate::comments::CommentSection;
 use crate::display::{broadcast_duration, Mark};
+use crate::manage::OwnerActions;
 use crate::refresh::{sleep_ms, REFRESH_MS};
-use crate::{format_kst, get_broadcast, Broadcast, Route};
+use crate::{format_kst, get_broadcast, Broadcast, NotFound, Route};
 
 /// 라이브 방송 상세: 방송 중이면 시청 화면, 종료면 종료 안내.
 /// 소유자에게는 방송 중일 때 "방송 종료" 버튼이 보인다.
 #[component]
 pub fn LiveDetail(broadcast: Broadcast) -> Element {
     let mut current = use_signal(|| broadcast.clone());
-    let login = use_login_state();
+    // 보고 있던 방송이 지워졌는지.
+    let mut deleted = use_signal(|| false);
 
-    // 5초마다 상태를 확인한다. 종료되면 더 묻지 않는다.
+    // 5초마다 상태(제목 포함)를 확인한다. 종료되거나 지워지면 더 묻지 않는다.
     use_effect(move || {
         let id = current.peek().id;
         spawn(async move {
             while current.peek().mark() == Mark::Live {
                 sleep_ms(REFRESH_MS).await;
                 // 확인에 실패하면 지금 화면을 그대로 두고 다음에 다시 묻는다.
-                if let Ok(Some(latest)) = get_broadcast(id).await {
-                    if latest != *current.peek() {
-                        current.set(latest);
+                match get_broadcast(id).await {
+                    Ok(Some(latest)) => {
+                        if latest != *current.peek() {
+                            current.set(latest);
+                        }
                     }
+                    Ok(None) => {
+                        deleted.set(true);
+                        break;
+                    }
+                    Err(_) => {}
                 }
             }
         });
     });
 
+    // 지워지면 LivePlayer가 사라지며 연결을 닫는다.
+    if deleted() {
+        return rsx! { NotFound {} };
+    }
     let broadcast = current();
     let shown_time = broadcast.shown_time();
-    let is_owner = matches!(
-        &*login.read(),
-        LoginState::User(name) if broadcast.owner.as_ref() == Some(name)
-    );
     // 종료가 끝나면 바로 다시 불러와 종료 안내로 바꾼다(5초 확인을 기다리지 않는다).
     let refresh = move |_| {
         let id = current.peek().id;
@@ -68,17 +77,17 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
                 "{broadcast.title}"
             }
             p { class: "detail-owner", "{broadcast.owner_label()}" }
-            // 소유자만 보는 방송 관리 버튼들.
-            if is_owner {
-                div { class: "owner-actions",
-                    if broadcast.mark() == Mark::Live {
-                        EndLiveButton { id: broadcast.id, on_ended: refresh }
-                    }
-                }
-            }
             p { class: "card-time", "시작 {format_kst(&shown_time)}" }
             if let Some(ended_at) = broadcast.ended_at {
                 p { class: "card-time", "방송한 시간 {broadcast_duration(shown_time, ended_at)}" }
+            }
+            OwnerActions {
+                broadcast: broadcast.clone(),
+                on_renamed: move |title| current.write().title = title,
+                // 소유자에게만 보이는 "방송 종료". 송출 화면을 닫았어도 여기서 끌 수 있다.
+                if broadcast.mark() == Mark::Live {
+                    EndLiveButton { id: broadcast.id, on_ended: refresh }
+                }
             }
             Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
         }

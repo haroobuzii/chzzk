@@ -17,6 +17,7 @@ mod db;
 mod display;
 #[cfg(feature = "server")]
 mod live;
+mod manage;
 mod number;
 mod publisher;
 mod refresh;
@@ -35,6 +36,7 @@ mod viewer;
 use account::{HeaderLogin, Login, RequireLogin, Signup};
 use comments::CommentSection;
 use display::Mark;
+use manage::OwnerActions;
 use publisher::NewLive;
 use refresh::{sleep_ms, REFRESH_MS};
 use viewer::LiveDetail;
@@ -298,22 +300,7 @@ fn BroadcastDetail(segment: String) -> Element {
             LiveDetail { key: "{broadcast.id}", broadcast: broadcast.clone() }
         },
         Some(Ok(Some(broadcast))) => rsx! {
-            article { class: "detail",
-                // 원본 MP4를 Range 요청으로 받으므로 끝까지 내려받지 않고도 건너뛸 수 있다.
-                // playsinline: iOS Safari에서 전체 화면으로 강제로 바뀌지 않고 화면 안에서 재생한다.
-                video {
-                    class: "player",
-                    src: "/api/broadcasts/{broadcast.id}/video",
-                    controls: true,
-                    playsinline: true,
-                    preload: "metadata",
-                }
-                h1 { class: "detail-title", "{broadcast.title}" }
-                p { class: "detail-owner", "{broadcast.owner_label()}" }
-                p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
-                Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
-            }
-            CommentSection { broadcast_id: broadcast.id, live: false }
+            RecordedDetail { key: "{broadcast.id}", broadcast: broadcast.clone() }
         },
         Some(Ok(None)) => rsx! { NotFound {} },
         Some(Err(e)) => rsx! {
@@ -324,6 +311,35 @@ fn BroadcastDetail(segment: String) -> Element {
         },
     };
     view
+}
+
+/// 녹화 방송 상세: 영상 재생기와 제목, 소유자, 등록 시각. 소유자에게는 관리 버튼이 보인다.
+#[component]
+fn RecordedDetail(broadcast: Broadcast) -> Element {
+    let mut current = use_signal(|| broadcast.clone());
+    let broadcast = current();
+    rsx! {
+        article { class: "detail",
+            // 원본 MP4를 Range 요청으로 받으므로 끝까지 내려받지 않고도 건너뛸 수 있다.
+            // playsinline: iOS Safari에서 전체 화면으로 강제로 바뀌지 않고 화면 안에서 재생한다.
+            video {
+                class: "player",
+                src: "/api/broadcasts/{broadcast.id}/video",
+                controls: true,
+                playsinline: true,
+                preload: "metadata",
+            }
+            h1 { class: "detail-title", "{broadcast.title}" }
+            p { class: "detail-owner", "{broadcast.owner_label()}" }
+            p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
+            OwnerActions {
+                broadcast: broadcast.clone(),
+                on_renamed: move |title| current.write().title = title,
+            }
+            Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
+        }
+        CommentSection { broadcast_id: broadcast.id, live: false }
+    }
 }
 
 /// 정해지지 않은 주소.
