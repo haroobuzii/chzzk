@@ -8,7 +8,7 @@ use sqlx::PgPool;
 
 use super::expiry;
 use super::store::{self, Order, OrderStatus};
-use super::toss::{Approval, TossConfig};
+use super::toss::{Approval, Ending, TossConfig};
 
 /// 결제창에서 돌아온 주소에 담긴 값. 브라우저가 보낸 값이라 그대로 믿지 않는다.
 pub struct Returned<'a> {
@@ -55,13 +55,22 @@ pub async fn confirm(
     if order.status != OrderStatus::Pending {
         return Ok(order);
     }
-    if store::expire_if_older_than(pool, &order.order_id, expiry::cutoff(Utc::now())).await? {
+    if order.created_at < expiry::cutoff(Utc::now()) {
+        store::mark_ended(
+            pool,
+            &order.order_id,
+            OrderStatus::Expired,
+            store::EXPIRED_CODE,
+            store::EXPIRED_MESSAGE,
+        )
+        .await?;
         return reload(pool, &order.order_id).await;
     }
     if returned.amount != order.amount {
-        store::mark_failed(
+        store::mark_ended(
             pool,
             &order.order_id,
+            OrderStatus::Failed,
             AMOUNT_MISMATCH,
             "결제 금액이 주문서와 달라요.",
         )
@@ -90,16 +99,26 @@ pub async fn settle(
             store::mark_confirmed(pool, &order.order_id, &payment.payment_key).await?;
         }
         Approval::Approved(_) => {
-            store::mark_failed(
+            store::mark_ended(
                 pool,
                 &order.order_id,
+                OrderStatus::Failed,
                 PAYMENT_MISMATCH,
                 "승인된 결제가 주문서와 달라요.",
             )
             .await?;
         }
-        Approval::Declined { code, message } => {
-            store::mark_failed(pool, &order.order_id, &code, &message).await?;
+        Approval::Declined {
+            ending,
+            code,
+            message,
+        } => {
+            let status = match ending {
+                Ending::Failed => OrderStatus::Failed,
+                Ending::Canceled => OrderStatus::Canceled,
+                Ending::Expired => OrderStatus::Expired,
+            };
+            store::mark_ended(pool, &order.order_id, status, &code, &message).await?;
         }
         Approval::Unknown { message } => return Err(ConfirmError::Unknown(message)),
     }

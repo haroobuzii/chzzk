@@ -1,4 +1,4 @@
-//! 후원 HTTP 라우트. 주문서 만들기와 실패 보고는 로그인한 사용자, 합계·내역과 승인 확인은 누구나.
+//! 후원 HTTP 라우트. 주문서 만들기와 실패 보고는 로그인한 사용자, 합계·내역과 승인 확인·승인 통지는 누구나.
 //! 권한 검사는 [`CurrentUser`]를 거친다.
 
 use axum::{
@@ -13,7 +13,7 @@ use sqlx::PgPool;
 
 use super::confirm::{self, ConfirmError, Returned};
 use super::rules::{format_won, validate_amount, validate_message, MessageTooLong};
-use super::store::{self, Abandoned, NewOrder, Order, OrderStatus};
+use super::store::{self, NewOrder, Order, OrderStatus};
 use super::toss::TossConfig;
 use super::{ConfirmResult, CreatedOrder, DonationSummary};
 use crate::auth::CurrentUser;
@@ -41,6 +41,10 @@ pub fn api(state: DonationsState) -> Router {
         .route("/api/broadcasts/{number}/donations", get(list).post(create))
         .route("/api/donations/confirm", post(confirm_returned))
         .route("/api/donations/fail", post(fail_returned))
+        .route(
+            "/api/payments/toss-webhook",
+            post(super::webhook::toss_webhook),
+        )
         .with_state(state)
 }
 
@@ -239,19 +243,38 @@ async fn fail_returned(
     };
     let code: String = request.code.chars().take(MAX_CODE_CHARS).collect();
     let to = if CANCEL_CODES.contains(&code.as_str()) {
-        Abandoned::Canceled
+        OrderStatus::Canceled
     } else {
-        Abandoned::Failed
+        OrderStatus::Failed
     };
     let message: String = match request.message.as_deref().map(str::trim) {
         Some(text) if !text.is_empty() => text.chars().take(MAX_MESSAGE_CHARS).collect(),
-        _ if to == Abandoned::Canceled => "결제를 취소했습니다.".into(),
+        _ if to == OrderStatus::Canceled => "결제를 취소했습니다.".into(),
         _ => "결제가 승인되지 않았어요.".into(),
     };
-    match store::abandon_by_donor(&state.pool, &order_id, user.id, to, &code, &message).await {
+    match end_own_order(&state.pool, &order_id, user.id, to, &code, &message).await {
         Ok(Some(order)) => Json(confirm_result(order)).into_response(),
         Ok(None) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => server_error("결제 실패 기록", e),
+    }
+}
+
+/// `donor_id`의 주문서면 결제 대기일 때만 `to`로 바꾸고 끝난 뒤의 주문서를 돌려준다.
+/// 없거나 남의 주문서면 아무것도 바꾸지 않고 `None`이다.
+async fn end_own_order(
+    pool: &PgPool,
+    order_id: &str,
+    donor_id: i64,
+    to: OrderStatus,
+    code: &str,
+    message: &str,
+) -> sqlx::Result<Option<Order>> {
+    match store::find_by_order_id(pool, order_id).await? {
+        Some(order) if order.donor_id == donor_id => {
+            store::mark_ended(pool, order_id, to, code, message).await?;
+            store::find_by_order_id(pool, order_id).await
+        }
+        _ => Ok(None),
     }
 }
 

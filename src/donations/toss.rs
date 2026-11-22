@@ -1,7 +1,7 @@
 //! 결제 연결(토스페이먼츠). 결제 회사와 주고받는 코드는 모두 이 모듈에 둔다(ADR 0007).
 //!
-//! 나머지 모듈은 토스의 응답 모양을 모른다. [`TossConfig::approve`]가 돌려주는 [`Approval`]
-//! ("이 주문 번호·금액으로 승인됐다/아니다/아직 모른다")만 다룬다.
+//! 나머지 모듈은 토스의 응답 모양을 모른다. [`TossConfig::approve`]와 [`TossConfig::lookup`]이
+//! 돌려주는 [`Approval`]("이 주문 번호·금액으로 승인됐다/아니다/아직 모른다")만 다룬다.
 //!
 //! 토스 응답에서는 상태, 금액, 주문 번호, 결제 키만 읽는다.
 
@@ -99,11 +99,33 @@ impl TossConfig {
 pub enum Approval {
     /// 결제 회사가 승인을 마쳤다. 금액·주문 번호가 주문서와 같은지는 받는 쪽이 본다.
     Approved(ApprovedPayment),
-    /// 승인되지 않았다(거절, 취소, 만료 등). 주문서를 실패로 바꿔도 된다.
-    Declined { code: String, message: String },
+    /// 승인되지 않았다(거절, 취소, 만료 등). 주문서를 `ending`으로 끝내도 된다.
+    Declined {
+        ending: Ending,
+        code: String,
+        message: String,
+    },
     /// 지금은 알 수 없다(결제 회사에 닿지 않음, 결제 회사 내부 오류, 아직 진행 중).
     /// 주문서는 결제 대기로 둔다.
     Unknown { message: String },
+}
+
+/// 승인되지 않은 결제가 끝난 모양. 주문서의 실패·취소·만료에 맞춘다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ending {
+    /// 거절·중단 등.
+    Failed,
+    /// 결제가 취소됐다.
+    Canceled,
+    /// 시간이 지나 결제가 만료됐다.
+    Expired,
+}
+
+/// 결제 키로 조회한 결제. 어느 주문서의 결제인지와 그 승인 결과다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    pub order_id: String,
+    pub approval: Approval,
 }
 
 /// 승인을 마친 결제 하나.
@@ -188,10 +210,36 @@ impl TossConfig {
                     message: error.message,
                 },
                 _ => Approval::Declined {
+                    ending: Ending::Failed,
                     code: error.code,
                     message: error.message,
                 },
             },
+        }
+    }
+
+    /// 결제 키로 결제를 조회한다(`GET /v1/payments/{결제 키}`). 승인은 하지 않는다.
+    ///
+    /// 승인 통지처럼 믿을 수 없는 곳에서 온 결제 키를 받는다. 그래서 결제 키 모양부터 보고,
+    /// 토스가 돌려준 결제의 결제 키가 같은지도 본다. 결제가 없거나 조회하지 못했으면 그 이유가 `Err`다.
+    pub async fn lookup(&self, payment_key: &str) -> Result<Found, String> {
+        if !is_payment_key(payment_key) {
+            return Err("결제 키 모양이 아니에요.".into());
+        }
+        let request = http()
+            .get(format!("{}/v1/payments/{payment_key}", self.api_url))
+            .basic_auth(&self.secret_key, None::<&str>);
+        match send(request).await {
+            Answer::Payment(payment) if payment.payment_key == payment_key => Ok(Found {
+                order_id: payment.order_id.clone(),
+                approval: judge(payment),
+            }),
+            Answer::Payment(_) => Err("조회한 결제의 결제 키가 달라요.".into()),
+            Answer::Error { status, error } => Err(format!(
+                "토스가 {status}({})로 답했어요: {}",
+                error.code, error.message
+            )),
+            Answer::Unreachable(message) => Err(message),
         }
     }
 
@@ -231,6 +279,15 @@ async fn send(request: reqwest::RequestBuilder) -> Answer {
     }
 }
 
+/// 토스 결제 키 모양인지(1~200자, 영문·숫자·`-`·`_`). 조회 주소 경로에 그대로 넣으므로
+/// `/`·`.` 같은 글자로 다른 주소를 부르지 못하게 한다.
+fn is_payment_key(key: &str) -> bool {
+    (1..=200).contains(&key.len())
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// 토스 결제 상태를 승인 결과로 바꾼다. `DONE`만 승인이다.
 fn judge(payment: Payment) -> Approval {
     match payment.status.as_str() {
@@ -240,6 +297,11 @@ fn judge(payment: Payment) -> Approval {
             amount: payment.total_amount,
         }),
         "CANCELED" | "PARTIAL_CANCELED" | "ABORTED" | "EXPIRED" => Approval::Declined {
+            ending: match payment.status.as_str() {
+                "CANCELED" | "PARTIAL_CANCELED" => Ending::Canceled,
+                "EXPIRED" => Ending::Expired,
+                _ => Ending::Failed,
+            },
             code: payment.status.clone(),
             message: format!("결제가 승인되지 않았어요({}).", payment.status),
         },
