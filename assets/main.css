@@ -509,6 +509,26 @@ h1 {
     cursor: pointer;
 }
 
+/* 결제 뒤 돌아오는 결과 화면 */
+.donation-result {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-top: 60px;
+    text-align: center;
+}
+
+.donation-result h1,
+.donation-result p {
+    margin: 0;
+}
+
+.donation-result-amount {
+    font-size: 28px;
+    font-weight: 700;
+}
+
 /* 상세 화면의 후원 칸: 테스트 결제 표시, 합계·내역, 금액·메시지 입력 */
 .donations {
     max-width: 960px;

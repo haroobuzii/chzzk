@@ -35,14 +35,14 @@ fn router(pool: &PgPool) -> Router {
     router_with(pool, Some(fake_toss()))
 }
 
-fn router_with(pool: &PgPool, toss: Option<TossConfig>) -> Router {
+pub(super) fn router_with(pool: &PgPool, toss: Option<TossConfig>) -> Router {
     crate::auth::guard_origin(super::api(DonationsState {
         pool: pool.clone(),
         toss,
     }))
 }
 
-async fn send(router: &Router, request: Request<Body>) -> (StatusCode, Value) {
+pub(super) async fn send(router: &Router, request: Request<Body>) -> (StatusCode, Value) {
     let response = router.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -51,7 +51,7 @@ async fn send(router: &Router, request: Request<Body>) -> (StatusCode, Value) {
 }
 
 /// 이 손님으로 `broadcast` 방송에 후원 주문서를 만든다.
-async fn order(
+pub(super) async fn order(
     router: &Router,
     persona: &Persona,
     broadcast: i64,
@@ -65,14 +65,14 @@ async fn order(
 }
 
 /// 비로그인으로 `broadcast` 방송의 후원 합계·내역을 본다.
-async fn donations(router: &Router, broadcast: i64) -> (StatusCode, Value) {
+pub(super) async fn donations(router: &Router, broadcast: i64) -> (StatusCode, Value) {
     let request = Request::get(format!("/api/broadcasts/{broadcast}/donations"))
         .body(Body::empty())
         .unwrap();
     send(router, request).await
 }
 
-async fn user_id(pool: &PgPool, persona: &Persona) -> i64 {
+pub(super) async fn user_id(pool: &PgPool, persona: &Persona) -> i64 {
     sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
         .bind(persona.username.as_deref().unwrap())
         .fetch_one(pool)
@@ -81,7 +81,7 @@ async fn user_id(pool: &PgPool, persona: &Persona) -> i64 {
 }
 
 /// `owner`가 소유한 녹화 방송을 DB에 넣는다. 방송 등록 API는 영상 파일이 필요해 여기서는 직접 넣는다.
-async fn owned_broadcast(pool: &PgPool, owner: &Persona) -> i64 {
+pub(super) async fn owned_broadcast(pool: &PgPool, owner: &Persona) -> i64 {
     let id = insert_recorded(pool, "방송", at(0)).await;
     sqlx::query("UPDATE broadcasts SET owner_id = $1 WHERE id = $2")
         .bind(user_id(pool, owner).await)

@@ -1,7 +1,7 @@
-//! 주문서 저장소: 주문서를 만들고, 방송별 확정된 후원을 읽는다.
+//! 주문서 저장소: 주문서를 만들고, 주문 번호로 찾고, 상태를 바꾸고, 방송별 확정된 후원을 읽는다.
 //!
-//! 주문 번호로 찾기와 상태 바꾸기(확정·실패·취소·만료)는 승인 확인(02~04)에서 여기에 더한다.
-//! 상태 바꾸기는 "결제 대기일 때만"을 조건으로 하는 UPDATE 하나로 한다.
+//! 상태 바꾸기는 "결제 대기일 때만"을 조건으로 하는 UPDATE 하나로 한다. 그래서 동시에 온 확인 중
+//! 하나만 이기고, 확정·실패·취소·만료는 되돌아가지 않는다.
 
 use chrono::{DateTime, Utc};
 use rand::RngCore;
@@ -77,6 +77,117 @@ pub async fn create(pool: &PgPool, order: NewOrder<'_>) -> sqlx::Result<String> 
     .execute(pool)
     .await?;
     Ok(order_id)
+}
+
+/// 주문서 상태. DB의 `status` 글자와 같다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrderStatus {
+    Pending,
+    Confirmed,
+    Failed,
+    Canceled,
+    Expired,
+}
+
+impl OrderStatus {
+    /// DB·API에 쓰는 이름.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Confirmed => "confirmed",
+            Self::Failed => "failed",
+            Self::Canceled => "canceled",
+            Self::Expired => "expired",
+        }
+    }
+
+    fn parse(text: &str) -> Self {
+        match text {
+            "confirmed" => Self::Confirmed,
+            "failed" => Self::Failed,
+            "canceled" => Self::Canceled,
+            "expired" => Self::Expired,
+            // DB의 CHECK가 다섯 값만 허락한다.
+            _ => Self::Pending,
+        }
+    }
+}
+
+/// 저장된 주문서 하나.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Order {
+    pub order_id: String,
+    /// 방송 번호. 방송이 지워졌으면 `None`.
+    pub broadcast_id: Option<i64>,
+    pub amount: i64,
+    pub status: OrderStatus,
+    /// 실패·취소·만료면 그 코드와 메시지.
+    pub failure_code: Option<String>,
+    pub failure_message: Option<String>,
+}
+
+/// 주문 번호로 주문서를 찾는다. 없으면 `None`.
+pub async fn find_by_order_id(pool: &PgPool, order_id: &str) -> sqlx::Result<Option<Order>> {
+    let row: Option<(
+        String,
+        Option<i64>,
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT order_id, broadcast_id, amount, status, failure_code, failure_message
+             FROM donation_orders WHERE order_id = $1",
+    )
+    .bind(order_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(
+        |(order_id, broadcast_id, amount, status, failure_code, failure_message)| Order {
+            order_id,
+            broadcast_id,
+            amount,
+            status: OrderStatus::parse(&status),
+            failure_code,
+            failure_message,
+        },
+    ))
+}
+
+/// 결제 대기일 때만 확정하고 결제 키를 남긴다. 바꿨으면 `true`, 이미 결제 대기가 아니면 `false`.
+pub async fn mark_confirmed(
+    pool: &PgPool,
+    order_id: &str,
+    payment_key: &str,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE donation_orders SET status = 'confirmed', payment_key = $2, confirmed_at = now()
+         WHERE order_id = $1 AND status = 'pending'",
+    )
+    .bind(order_id)
+    .bind(payment_key)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// 결제 대기일 때만 실패로 바꾸고 코드와 메시지를 남긴다. 바꿨으면 `true`.
+pub async fn mark_failed(
+    pool: &PgPool,
+    order_id: &str,
+    code: &str,
+    message: &str,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE donation_orders SET status = 'failed', failure_code = $2, failure_message = $3
+         WHERE order_id = $1 AND status = 'pending'",
+    )
+    .bind(order_id)
+    .bind(code)
+    .bind(message)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 /// 방송의 확정된 후원을 최신순으로 읽는다. 같은 시각이면 나중에 만든 주문서가 앞이다.

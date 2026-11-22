@@ -36,7 +36,7 @@ mod viewer;
 
 use comments::CommentSection;
 use display::Mark;
-use donations::DonationPanel;
+use donations::{DonationPanel, DonationSuccess};
 use login::{HeaderLogin, Login, RequireLogin, Signup};
 use manage::OwnerActions;
 use publisher::NewLive;
@@ -158,6 +158,9 @@ mod route {
         Signup { next: String },
         #[route("/broadcasts/:segment")]
         BroadcastDetail { segment: String },
+        /// 결제 뒤 토스가 돌려보내는 결과 화면. 쿼리(`paymentKey`·`orderId`·`amount`)는 통째로 받아 직접 읽는다.
+        #[route("/donations/success?:..query")]
+        DonationSuccess { query: String },
         #[route("/:..rest")]
         PageNotFound { rest: Vec<String> },
     }

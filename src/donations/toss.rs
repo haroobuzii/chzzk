@@ -1,8 +1,16 @@
 //! 결제 연결(토스페이먼츠). 결제 회사와 주고받는 코드는 모두 이 모듈에 둔다(ADR 0007).
 //!
-//! 지금은 키 설정만 있다. 승인·조회 API 호출은 승인 확인(02)에서 여기에 더한다.
+//! 나머지 모듈은 토스의 응답 모양을 모른다. [`TossConfig::approve`]가 돌려주는 [`Approval`]
+//! ("이 주문 번호·금액으로 승인됐다/아니다/아직 모른다")만 다룬다.
+//!
+//! 토스 응답에서는 상태, 금액, 주문 번호, 결제 키만 읽는다.
 
 use std::fmt;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+use serde::Deserialize;
+use serde_json::json;
 
 /// 토스 API 기본 주소.
 pub const DEFAULT_API_URL: &str = "https://api.tosspayments.com";
@@ -83,6 +91,162 @@ impl TossConfig {
                 .to_string(),
             test_fail_code,
         }))
+    }
+}
+
+/// 결제 회사가 알려 준 승인 결과. 결제 회사와 상관없는 모양이다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Approval {
+    /// 결제 회사가 승인을 마쳤다. 금액·주문 번호가 주문서와 같은지는 받는 쪽이 본다.
+    Approved(ApprovedPayment),
+    /// 승인되지 않았다(거절, 취소, 만료 등). 주문서를 실패로 바꿔도 된다.
+    Declined { code: String, message: String },
+    /// 지금은 알 수 없다(결제 회사에 닿지 않음, 결제 회사 내부 오류, 아직 진행 중).
+    /// 주문서는 결제 대기로 둔다.
+    Unknown { message: String },
+}
+
+/// 승인을 마친 결제 하나.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovedPayment {
+    /// 결제 회사의 결제 키(`paymentKey`).
+    pub payment_key: String,
+    pub order_id: String,
+    pub amount: i64,
+}
+
+/// 토스 Payment 객체에서 읽는 칸.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Payment {
+    payment_key: String,
+    order_id: String,
+    status: String,
+    total_amount: i64,
+}
+
+/// 토스 오류 응답 `{code, message}`.
+#[derive(Deserialize)]
+struct TossError {
+    code: String,
+    message: String,
+}
+
+/// 토스 API 한 번의 결과.
+enum Answer {
+    Payment(Payment),
+    Error {
+        status: u16,
+        error: TossError,
+    },
+    /// 닿지 않았거나 응답을 읽지 못했다.
+    Unreachable(String),
+}
+
+/// 토스 요청이 이보다 오래 걸리면 포기하고 "아직 모름"으로 둔다.
+const TIMEOUT: Duration = Duration::from_secs(15);
+
+/// 토스 요청에 쓰는 HTTP 클라이언트. 연결을 다시 쓰도록 하나만 만든다.
+fn http() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(TIMEOUT)
+            .build()
+            .expect("HTTP 클라이언트를 만들 수 있다")
+    })
+}
+
+impl TossConfig {
+    /// 결제를 승인하고 그 결과를 알려 준다.
+    ///
+    /// 1. 승인 API(`POST /v1/payments/confirm`)를 부른다. Basic 인증(`시크릿키:`)을 쓰고,
+    ///    `Idempotency-Key`는 주문 번호다. 같은 주문서를 두 번 승인해도 토스는 첫 응답을 다시 준다.
+    ///    `TOSS_TEST_FAIL_CODE`가 있으면 `TossPayments-Test-Code` 헤더를 붙인다.
+    /// 2. 승인이 오류를 주면 실패라고 단정하지 않는다. 이미 승인됐을 수 있으므로 주문 번호로
+    ///    다시 조회해 실제 상태로 판단한다(조회도 오류면 승인 오류를 그대로 알려 준다).
+    pub async fn approve(&self, payment_key: &str, order_id: &str, amount: i64) -> Approval {
+        let mut request = http()
+            .post(format!("{}/v1/payments/confirm", self.api_url))
+            .basic_auth(&self.secret_key, None::<&str>)
+            .header("Idempotency-Key", order_id)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(
+                json!({ "paymentKey": payment_key, "orderId": order_id, "amount": amount })
+                    .to_string(),
+            );
+        if let Some(code) = &self.test_fail_code {
+            request = request.header("TossPayments-Test-Code", code);
+        }
+        match send(request).await {
+            Answer::Payment(payment) => judge(payment),
+            Answer::Unreachable(message) => Approval::Unknown { message },
+            Answer::Error { status, error } => match self.lookup_by_order_id(order_id).await {
+                Answer::Payment(payment) => judge(payment),
+                // 다시 조회해도 결제가 없으면 승인 오류가 결과다. 토스 내부 오류(5xx)는 다시 해 볼 수 있다.
+                _ if status >= 500 => Approval::Unknown {
+                    message: error.message,
+                },
+                _ => Approval::Declined {
+                    code: error.code,
+                    message: error.message,
+                },
+            },
+        }
+    }
+
+    /// 주문 번호로 결제를 조회한다(`GET /v1/payments/orders/{주문 번호}`).
+    async fn lookup_by_order_id(&self, order_id: &str) -> Answer {
+        let request = http()
+            .get(format!("{}/v1/payments/orders/{order_id}", self.api_url))
+            .basic_auth(&self.secret_key, None::<&str>);
+        send(request).await
+    }
+}
+
+async fn send(request: reqwest::RequestBuilder) -> Answer {
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(e) => return Answer::Unreachable(format!("토스에 연결하지 못했어요: {e}")),
+    };
+    let status = response.status();
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => return Answer::Unreachable(format!("토스 응답을 읽지 못했어요: {e}")),
+    };
+    if status.is_success() {
+        match serde_json::from_slice(&bytes) {
+            Ok(payment) => Answer::Payment(payment),
+            Err(e) => Answer::Unreachable(format!("토스 응답을 읽지 못했어요: {e}")),
+        }
+    } else {
+        let error = serde_json::from_slice(&bytes).unwrap_or_else(|_| TossError {
+            code: "UNKNOWN".into(),
+            message: format!("토스가 {status}로 답했어요."),
+        });
+        Answer::Error {
+            status: status.as_u16(),
+            error,
+        }
+    }
+}
+
+/// 토스 결제 상태를 승인 결과로 바꾼다. `DONE`만 승인이다.
+fn judge(payment: Payment) -> Approval {
+    match payment.status.as_str() {
+        "DONE" => Approval::Approved(ApprovedPayment {
+            payment_key: payment.payment_key,
+            order_id: payment.order_id,
+            amount: payment.total_amount,
+        }),
+        "CANCELED" | "PARTIAL_CANCELED" | "ABORTED" | "EXPIRED" => Approval::Declined {
+            code: payment.status.clone(),
+            message: format!("결제가 승인되지 않았어요({}).", payment.status),
+        },
+        // READY·IN_PROGRESS·WAITING_FOR_DEPOSIT: 아직 끝나지 않았다.
+        _ => Approval::Unknown {
+            message: format!("결제가 아직 끝나지 않았어요({}).", payment.status),
+        },
     }
 }
 

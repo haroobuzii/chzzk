@@ -1,20 +1,21 @@
-//! 후원 HTTP 라우트. 주문서 만들기는 로그인한 사용자, 합계·내역은 누구나.
+//! 후원 HTTP 라우트. 주문서 만들기는 로그인한 사용자, 합계·내역과 승인 확인은 누구나.
 //! 권한 검사는 [`CurrentUser`]를 거친다.
 
 use axum::{
     extract::{rejection::JsonRejection, FromRef, Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use sqlx::PgPool;
 
+use super::confirm::{self, ConfirmError, Returned};
 use super::rules::{format_won, validate_amount, validate_message, MessageTooLong};
-use super::store::{self, NewOrder};
+use super::store::{self, NewOrder, Order, OrderStatus};
 use super::toss::TossConfig;
-use super::{CreatedOrder, DonationSummary};
+use super::{ConfirmResult, CreatedOrder, DonationSummary};
 use crate::auth::CurrentUser;
 use crate::number::parse_number;
 use crate::routes::{self, bad_request, failure, not_found};
@@ -38,6 +39,7 @@ impl FromRef<DonationsState> for PgPool {
 pub fn api(state: DonationsState) -> Router {
     Router::new()
         .route("/api/broadcasts/{number}/donations", get(list).post(create))
+        .route("/api/donations/confirm", post(confirm_returned))
         .with_state(state)
 }
 
@@ -138,6 +140,75 @@ async fn create(
         )
             .into_response(),
         Err(e) => server_error("주문서 만들기", e),
+    }
+}
+
+/// 승인 확인 요청 본문. 결제창이 돌아온 주소의 `paymentKey`·`orderId`·`amount`다.
+#[derive(Deserialize)]
+struct ConfirmRequest {
+    payment_key: String,
+    order_id: String,
+    amount: i64,
+}
+
+/// `POST /api/donations/confirm` `{payment_key, order_id, amount}`: 결과 화면이 부른다.
+/// 세션이 끊겨도 결제는 확정되어야 하므로 로그인은 요구하지 않는다.
+///
+/// 승인 확인([`confirm::confirm`])이 끝나면 200과 `{status, broadcast_id, amount, code?, message?}`를 준다.
+/// 같은 요청을 다시 보내도 같은 결과다.
+///
+/// 거절: 본문이 틀리면 400, 없는 주문서 404, 토스 키 없음 503,
+/// 토스 결과를 아직 알 수 없으면 502(`payment_unknown`, 주문서는 결제 대기로 남는다).
+async fn confirm_returned(
+    State(state): State<DonationsState>,
+    body: Result<Json<ConfirmRequest>, JsonRejection>,
+) -> Response {
+    let Some(toss) = &state.toss else {
+        return failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "donations_disabled",
+            "후원 기능을 쓰려면 토스 테스트 키가 필요해요.",
+        );
+    };
+    let Ok(Json(request)) = body else {
+        return bad_request("invalid_body", "결제 결과를 확인할 값이 없어요.");
+    };
+    let returned = Returned {
+        payment_key: &request.payment_key,
+        order_id: &request.order_id,
+        amount: request.amount,
+    };
+    match confirm::confirm(&state.pool, toss, returned).await {
+        Ok(order) => Json(confirm_result(order)).into_response(),
+        Err(ConfirmError::NotFound) => failure(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "주문서를 찾을 수 없어요.",
+        ),
+        Err(ConfirmError::Unknown(reason)) => {
+            log::warn!("승인 확인 보류: {reason}");
+            failure(
+                StatusCode::BAD_GATEWAY,
+                "payment_unknown",
+                "결제 결과를 아직 확인하지 못했어요. 잠시 뒤 새로고침해 주세요.",
+            )
+        }
+        Err(ConfirmError::Db(e)) => server_error("승인 확인", e),
+    }
+}
+
+fn confirm_result(order: Order) -> ConfirmResult {
+    let confirmed = order.status == OrderStatus::Confirmed;
+    ConfirmResult {
+        status: order.status.as_str().to_string(),
+        broadcast_id: order.broadcast_id,
+        amount: order.amount,
+        code: if confirmed { None } else { order.failure_code },
+        message: if confirmed {
+            None
+        } else {
+            order.failure_message
+        },
     }
 }
 
