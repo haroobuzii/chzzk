@@ -33,6 +33,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 비밀 키 검사가 모든 커밋 기록을 보도록 전체 기록을 받는다.
+          fetch-depth: 0
+
+      # 토스 키 모양(test_/live_ + ck/sk)이 커밋되면 실패한다. 테스트용 _fake 값과 자리표시자는 뺀다.
+      - name: 비밀 키 검사
+        run: scripts/check-secrets.sh --patterns-only
 
       # rust-toolchain.toml에 적힌 버전을 그대로 설치한다. 버전은 그 파일 한 곳에서만 정한다.
       - name: Rust 설치

@@ -196,7 +196,29 @@ async fn handle(
     let reply = if method == Method::POST && path == CONFIRM_PATH {
         inner.confirm.clone().unwrap_or_else(|| match test_code {
             // `TossPayments-Test-Code`가 있으면 진짜 토스 테스트 환경처럼 그 코드로 거절한다.
-            Some(code) => Reply::error(400, &code, "테스트 코드로 거절된 결제입니다."),
+            // 진짜 토스는 이렇게 거절된 결제를 조회하면 `IN_PROGRESS`(승인 전)로 돌려준다
+            // (docs/toss-payments.md "실제로 확인한 동작"). 테스트가 따로 정하지 않았으면 그대로 흉내 낸다.
+            Some(code) => {
+                let payment_key = body["paymentKey"].as_str().unwrap_or_default();
+                if !inner
+                    .payments
+                    .iter()
+                    .any(|p| p["paymentKey"] == payment_key)
+                {
+                    let in_progress = Reply::payment(
+                        "IN_PROGRESS",
+                        payment_key,
+                        body["orderId"].as_str().unwrap_or_default(),
+                        body["amount"].as_i64().unwrap_or_default(),
+                    );
+                    inner.payments.push(in_progress.body);
+                }
+                Reply::error(
+                    400,
+                    &code,
+                    "한도초과 혹은 잔액부족으로 결제에 실패했습니다.",
+                )
+            }
             // 정하지 않으면 받은 값 그대로 승인한다.
             None => Reply::payment(
                 "DONE",

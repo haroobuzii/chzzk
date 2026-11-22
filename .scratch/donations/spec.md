@@ -1,5 +1,7 @@
 # Spec: 4단계 후원(도네이션)
 
+과제 원문(체크리스트 포함): `assignment.md`
+
 Status: ready-for-agent
 
 ## Problem Statement

@@ -1,5 +1,7 @@
 # Spec: 3단계 인증·인가와 댓글
 
+과제 원문(체크리스트 포함): `assignment.md`
+
 Status: ready-for-agent
 
 ## Problem Statement

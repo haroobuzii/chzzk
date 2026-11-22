@@ -1,5 +1,7 @@
 # Spec: 1단계 녹화 방송 등록과 시청
 
+과제 원문(체크리스트 포함): `assignment.md`
+
 Status: ready-for-agent
 
 ## Problem Statement

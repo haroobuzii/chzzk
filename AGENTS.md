@@ -15,6 +15,9 @@
 - 작업 폴더(worktree)에서 일하거나 도우미를 여럿 띄울 때: `docs/agents/parallel-work.md`
 - MediaMTX(라이브 송출·시청, WHIP/WHEP, 관리 API)를 다룰 때: `docs/mediamtx.md`
 - 코드를 검토할 때: `CODING_STANDARDS.md`
+- 토스 결제(후원)를 다룰 때: `docs/toss-payments.md`
+- 비밀 키를 확인할 때: `scripts/check-secrets.sh`만 쓴다. 키 값은 출력하거나 이 컴퓨터 밖(GitHub 검색, 웹 요청 등)으로 보내지 않는다.
+- 단계마다 과제 원문(체크리스트 포함): `.scratch/<기능>/assignment.md`. 새 단계를 시작하면 원문부터 여기에 저장한다.
 
 ## Agent skills
 
