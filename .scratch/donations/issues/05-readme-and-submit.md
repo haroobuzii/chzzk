@@ -20,10 +20,10 @@
 
 **Blocked by:** 03, 04
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] README에 위 항목이 모두 있고, 1~3단계 항목도 남아 있다
 - [x] `curl` 예시를 실제로 실행해 적힌 결과가 나오는 것을 확인했다(가짜 토스 또는 받은 테스트 키로)
 - [x] 테스트 결과가 실제 실행 결과와 같다. CI의 README 테스트 개수 검사를 통과한다
 - [x] 저장소와 README에 실제 토스 키가 없다
-- [ ] 사용자 확인 뒤 GitHub에 올리고 `step-4` 태그를 붙인다. GitHub 자동 검사가 통과한다
+- [x] 사용자 확인 뒤 GitHub에 올리고 `step-4` 태그를 붙인다. GitHub 자동 검사가 통과한다
