@@ -294,7 +294,8 @@ async fn send(request: reqwest::RequestBuilder) -> Answer {
 /// 승인 오류 뒤 주문 번호로 다시 조회한 결과(`lookup`)로 판단한다.
 ///
 /// 승인이 오류여도 돈이 나갔을 수 있으므로 확실한 조회 결과만 판단에 쓴다.
-/// - 결제가 조회되면 그 결제의 상태로 판단한다. 승인되지 않은 결제면 실패 이유는 승인 오류의 코드·메시지다
+/// - 결제가 조회되면 그 결제의 상태로 판단한다. 승인되지 않은 결제면 실패 이유는 승인 오류의 코드·메시지다.
+///   승인 전(READY·IN_PROGRESS)이면 승인 오류가 확실한 거절(4xx)일 때만 실패이고, 아니면 아직 모른다
 ///   (`REJECT_CARD_PAYMENT`처럼 사용자에게 더 쓸모 있는 이유다).
 /// - 조회가 `NOT_FOUND_PAYMENT`면 결제가 없다. 승인 오류가 다시 해 볼 수 있는 오류(5xx, 429, 409 처리 중)가
 ///   아니면 승인 오류가 결과다.
@@ -305,6 +306,13 @@ fn after_confirm_error(status: u16, error: TossError, lookup: Answer) -> Approva
         Answer::Payment(payment) => match judge(payment) {
             Approval::Declined { ending, .. } => Approval::Declined {
                 ending,
+                code: error.code,
+                message: error.message,
+            },
+            // 승인이 확실히 거절됐고(4xx) 결제가 아직 승인 전(READY·IN_PROGRESS)이면 실패다.
+            // 실제 토스 테스트 모드에서 카드 거절은 이렇게 온다. 다시 해 볼 수 있는 오류면 아직 모른다.
+            Approval::Unknown { .. } if !retryable => Approval::Declined {
+                ending: Ending::Failed,
                 code: error.code,
                 message: error.message,
             },
@@ -426,6 +434,53 @@ mod tests {
             .unwrap_err();
         assert!(error.contains("TOSS_SECRET_KEY"), "{error}");
         assert!(!error.contains("live_sk_fake"), "{error}");
+    }
+
+    fn 진행_중(status: &str) -> Answer {
+        Answer::Payment(Payment {
+            payment_key: "pk".into(),
+            order_id: "don_order".into(),
+            status: status.into(),
+            total_amount: 10_000,
+        })
+    }
+
+    fn 거절(code: &str) -> TossError {
+        TossError {
+            code: code.into(),
+            message: "카드사에서 거절했어요.".into(),
+        }
+    }
+
+    #[test]
+    fn 확실한_거절_뒤_조회가_진행_중이면_승인_오류의_이유로_실패다() {
+        // 실제 토스 테스트 모드: TossPayments-Test-Code로 거절하면 조회 결과는 IN_PROGRESS다.
+        for status in ["IN_PROGRESS", "READY"] {
+            match after_confirm_error(403, 거절("REJECT_CARD_PAYMENT"), 진행_중(status)) {
+                Approval::Declined { ending, code, .. } => {
+                    assert!(matches!(ending, Ending::Failed));
+                    assert_eq!(code, "REJECT_CARD_PAYMENT");
+                }
+                _ => panic!("{status}: 실패여야 한다"),
+            }
+        }
+    }
+
+    #[test]
+    fn 다시_해_볼_수_있는_오류_뒤_조회가_진행_중이면_아직_모른다() {
+        for (http, code) in [
+            (500, "PROVIDER_ERROR"),
+            (429, "TOO_MANY_REQUESTS"),
+            (409, IDEMPOTENT_REQUEST_PROCESSING),
+        ] {
+            assert!(
+                matches!(
+                    after_confirm_error(http, 거절(code), 진행_중("IN_PROGRESS")),
+                    Approval::Unknown { .. }
+                ),
+                "{http} {code}"
+            );
+        }
     }
 
     #[test]
