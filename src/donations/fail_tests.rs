@@ -12,9 +12,13 @@ use chrono::{DateTime, TimeDelta, Utc};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
+use super::confirm;
 use super::expiry;
-use super::fake_toss::FakeToss;
+use super::fake_toss::{FakeToss, Reply};
+use super::store::{self, OrderStatus};
 use super::tests::{donations, order, owned_broadcast, router_with, send};
+use super::toss::{Approval, ApprovedPayment};
+use super::webhook_tests::{notice, webhook};
 use crate::auth::personas::Persona;
 
 /// 가짜 토스를 쓰는 후원 라우터, A의 방송, 그 방송에 후원하는 B.
@@ -348,4 +352,130 @@ async fn 취소된_주문서는_다시_실패로_바뀌지_않는다(pool: PgPoo
 
     assert_eq!(json["status"], "canceled");
     assert_eq!(json["code"], "USER_CANCEL");
+}
+
+/// 결제 회사가 `order_id`의 5,000원 결제(`pay_1`)를 승인을 마쳤다고 알려 준 결과.
+fn approved(order_id: &str) -> Approval {
+    Approval::Approved(ApprovedPayment {
+        payment_key: "pay_1".into(),
+        order_id: order_id.into(),
+        amount: 5000,
+    })
+}
+
+#[sqlx::test]
+async fn 승인_도중_만료돼도_승인된_결제는_확정된다(pool: PgPool) {
+    // 승인 확인이 토스를 부르는 동안 만료 정리가 주문서를 만료로 바꾼 경우: 돈은 이미 나갔다.
+    let s = Setup::new(&pool).await;
+    let order_id = s.order().await;
+    let in_flight = store::find_by_order_id(&pool, &order_id)
+        .await
+        .unwrap()
+        .unwrap();
+    expiry::expire_once(&pool, minutes_later(31)).await.unwrap();
+
+    let settled = confirm::settle(&pool, &in_flight, approved(&order_id))
+        .await
+        .unwrap();
+
+    assert_eq!(settled.status, OrderStatus::Confirmed);
+    assert_eq!(s.summary().await["count"], 1);
+    assert_eq!(s.summary().await["total_amount"], 5000);
+}
+
+#[sqlx::test]
+async fn 이미_확정된_주문서에_승인이_다시_와도_후원은_하나다(pool: PgPool) {
+    let s = Setup::new(&pool).await;
+    let order_id = s.order().await;
+    s.confirm(&order_id).await;
+    let confirmed = store::find_by_order_id(&pool, &order_id)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let again = confirm::settle(&pool, &confirmed, approved(&order_id))
+        .await
+        .unwrap();
+
+    assert_eq!(again, confirmed, "확정된 주문서는 그대로다");
+    assert_eq!(s.summary().await["count"], 1);
+}
+
+#[sqlx::test]
+async fn 실패_보고_뒤에_승인_통지가_오면_확정된다(pool: PgPool) {
+    // 결제창이 실패를 알렸지만 실제로는 승인이 끝난 경우. 통지가 조회한 DONE을 믿는다.
+    let s = Setup::new(&pool).await;
+    let order_id = s.order().await;
+    s.fail(
+        &s.donor,
+        json!({ "order_id": order_id, "code": "USER_CANCEL" }),
+    )
+    .await;
+    s.toss
+        .add_payment(Reply::payment("DONE", "pay_1", &order_id, 5000));
+
+    let (status, _) = webhook(
+        &s.router,
+        &notice("pay_1", &order_id, "DONE", 5000).to_string(),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let after = s.confirm(&order_id).await;
+    assert_eq!(after["status"], "confirmed");
+    assert_eq!(after.get("code"), None, "확정이면 실패 이유가 없다");
+    assert_eq!(s.summary().await["count"], 1);
+    assert!(
+        s.toss.confirm_requests().is_empty(),
+        "통지는 승인하지 않는다"
+    );
+
+    // 같은 통지가 다시 와도 후원은 하나다.
+    webhook(
+        &s.router,
+        &notice("pay_1", &order_id, "DONE", 5000).to_string(),
+    )
+    .await;
+    assert_eq!(s.summary().await["count"], 1);
+}
+
+#[sqlx::test]
+async fn 만료된_주문서도_승인_통지가_done이면_확정된다(pool: PgPool) {
+    let s = Setup::new(&pool).await;
+    let order_id = s.order().await;
+    expiry::expire_once(&pool, minutes_later(31)).await.unwrap();
+    s.toss
+        .add_payment(Reply::payment("DONE", "pay_1", &order_id, 5000));
+
+    webhook(
+        &s.router,
+        &notice("pay_1", &order_id, "DONE", 5000).to_string(),
+    )
+    .await;
+
+    assert_eq!(s.confirm(&order_id).await["status"], "confirmed");
+    assert_eq!(s.summary().await["total_amount"], 5000);
+}
+
+#[sqlx::test]
+async fn 끝난_주문서에_승인되지_않은_통지가_오면_그대로다(pool: PgPool) {
+    let s = Setup::new(&pool).await;
+    let order_id = s.order().await;
+    s.fail(
+        &s.donor,
+        json!({ "order_id": order_id, "code": "USER_CANCEL" }),
+    )
+    .await;
+    s.toss
+        .add_payment(Reply::payment("ABORTED", "pay_1", &order_id, 5000));
+
+    webhook(
+        &s.router,
+        &notice("pay_1", &order_id, "ABORTED", 5000).to_string(),
+    )
+    .await;
+
+    let after = s.confirm(&order_id).await;
+    assert_eq!(after["status"], "canceled");
+    assert_eq!(after["code"], "USER_CANCEL");
 }

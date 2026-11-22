@@ -14,7 +14,7 @@ use sqlx::PgPool;
 use super::confirm::{self, ConfirmError, Returned};
 use super::rules::{format_won, validate_amount, validate_message, MessageTooLong};
 use super::store::{self, NewOrder, Order, OrderStatus};
-use super::toss::TossConfig;
+use super::toss::{self, TossConfig};
 use super::{ConfirmResult, CreatedOrder, DonationSummary};
 use crate::auth::CurrentUser;
 use crate::number::parse_number;
@@ -211,16 +211,13 @@ struct FailRequest {
     message: Option<String>,
 }
 
-/// 토스가 "구매자가 취소했다"고 알리는 코드. failUrl의 `PAY_PROCESS_CANCELED`와 SDK의 `USER_CANCEL`.
-const CANCEL_CODES: [&str; 2] = ["PAY_PROCESS_CANCELED", "USER_CANCEL"];
-
 /// 남겨 둘 실패 코드·메시지의 최대 글자 수. 브라우저가 보낸 값이라 길이를 자른다.
 const MAX_CODE_CHARS: usize = 64;
 const MAX_MESSAGE_CHARS: usize = 200;
 
 /// `POST /api/donations/fail` `{order_id?, code, message?}`: 실패·취소 결과 화면이 부른다. 로그인 필요.
 ///
-/// 로그인한 후원자 본인의 결제 대기 주문서만 바꾼다. 취소 코드([`CANCEL_CODES`])면 취소, 그 밖은 실패다.
+/// 로그인한 후원자 본인의 결제 대기 주문서만 바꾼다. 구매자 취소 코드([`toss::is_buyer_cancel`])면 취소, 그 밖은 실패다.
 /// 본인 주문서면 200과 승인 확인과 같은 `{status, broadcast_id, amount, code?, message?}`를 준다.
 /// 이미 결제 대기가 아니면 바꾸지 않고 지금 상태를 준다.
 /// 주문 번호가 없거나 남의 주문서·없는 주문서면 아무것도 바꾸지 않고 204다.
@@ -242,7 +239,7 @@ async fn fail_returned(
         return StatusCode::NO_CONTENT.into_response();
     };
     let code: String = request.code.chars().take(MAX_CODE_CHARS).collect();
-    let to = if CANCEL_CODES.contains(&code.as_str()) {
+    let to = if toss::is_buyer_cancel(&code) {
         OrderStatus::Canceled
     } else {
         OrderStatus::Failed
@@ -281,7 +278,7 @@ async fn end_own_order(
 fn confirm_result(order: Order) -> ConfirmResult {
     let confirmed = order.status == OrderStatus::Confirmed;
     ConfirmResult {
-        status: order.status.as_str().to_string(),
+        status: order.status,
         broadcast_id: order.broadcast_id,
         amount: order.amount,
         code: if confirmed { None } else { order.failure_code },

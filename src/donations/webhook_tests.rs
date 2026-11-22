@@ -17,7 +17,7 @@ use super::fake_toss::Reply;
 use super::tests::send;
 
 /// 토스가 보내는 모양의 승인 통지 본문. `data`는 토스 Payment 객체다.
-fn notice(payment_key: &str, order_id: &str, status: &str, amount: i64) -> Value {
+pub(super) fn notice(payment_key: &str, order_id: &str, status: &str, amount: i64) -> Value {
     json!({
         "eventType": "PAYMENT_STATUS_CHANGED",
         "createdAt": "2026-11-22T10:00:00.000000",
@@ -32,7 +32,7 @@ fn notice(payment_key: &str, order_id: &str, status: &str, amount: i64) -> Value
 }
 
 /// 토스처럼 쿠키·`Origin` 없이 통지를 보낸다.
-async fn webhook(router: &Router, body: &str) -> (StatusCode, Value) {
+pub(super) async fn webhook(router: &Router, body: &str) -> (StatusCode, Value) {
     let request = Request::post("/api/payments/toss-webhook")
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_string()))

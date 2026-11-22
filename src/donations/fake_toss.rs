@@ -3,6 +3,7 @@
 //! 하는 일은 둘이다.
 //! - 받은 승인·조회 요청을 헤더까지 모두 기록한다.
 //! - 테스트가 정한 대답을 돌려준다. 정하지 않으면 승인은 받은 값 그대로 `DONE`이다.
+//!   단 `TossPayments-Test-Code` 헤더가 있으면 승인은 그 코드의 400 오류다(토스 테스트 환경과 같다).
 //!   조회는 [`FakeToss::add_payment`]로 넣어 둔 결제를 결제 키·주문 번호로 찾아 주고, 없으면 404(`NOT_FOUND_PAYMENT`)다.
 //!
 //! 쓰는 법:
@@ -180,6 +181,10 @@ async fn handle(
 ) -> Response {
     let path = uri.path().to_string();
     let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let test_code = headers
+        .get("TossPayments-Test-Code")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
     let mut inner = inner.lock().unwrap();
     inner.requests.push(CapturedRequest {
         method: method.clone(),
@@ -189,14 +194,16 @@ async fn handle(
     });
 
     let reply = if method == Method::POST && path == CONFIRM_PATH {
-        inner.confirm.clone().unwrap_or_else(|| {
+        inner.confirm.clone().unwrap_or_else(|| match test_code {
+            // `TossPayments-Test-Code`가 있으면 진짜 토스 테스트 환경처럼 그 코드로 거절한다.
+            Some(code) => Reply::error(400, &code, "테스트 코드로 거절된 결제입니다."),
             // 정하지 않으면 받은 값 그대로 승인한다.
-            Reply::payment(
+            None => Reply::payment(
                 "DONE",
                 body["paymentKey"].as_str().unwrap_or_default(),
                 body["orderId"].as_str().unwrap_or_default(),
                 body["amount"].as_i64().unwrap_or_default(),
-            )
+            ),
         })
     } else if method == Method::GET && path.starts_with("/v1/payments/") {
         inner.lookup.clone().unwrap_or_else(|| {

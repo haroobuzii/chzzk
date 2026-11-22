@@ -1,4 +1,4 @@
-//! 결제 연결(토스페이먼츠). 결제 회사와 주고받는 코드는 모두 이 모듈에 둔다(ADR 0007).
+//! 결제 연결의 서버 쪽: 토스 API 승인·조회와 승인 통지 읽기(ADR 0007).
 //!
 //! 나머지 모듈은 토스의 응답 모양을 모른다. [`TossConfig::approve`]와 [`TossConfig::lookup`]이
 //! 돌려주는 [`Approval`]("이 주문 번호·금액으로 승인됐다/아니다/아직 모른다")만 다룬다.
@@ -147,6 +147,26 @@ struct Payment {
     total_amount: i64,
 }
 
+/// 승인 통지(웹훅) 본문 `{eventType, createdAt, data: Payment}`에서 읽는 칸. 결제 키 말고는 읽지 않는다.
+#[derive(Deserialize)]
+struct Notice {
+    data: NoticeData,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NoticeData {
+    payment_key: String,
+}
+
+/// 승인 통지 본문에서 결제 키만 꺼낸다. 본문은 누구나 꾸며 보낼 수 있으므로 나머지 값은 믿지 않고,
+/// 결제 키로 [`TossConfig::lookup`]에 다시 조회한다. 결제 키가 없는 본문이면 `None`.
+pub fn read_notice(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Notice>(body)
+        .ok()
+        .map(|notice| notice.data.payment_key)
+}
+
 /// 토스 오류 응답 `{code, message}`.
 #[derive(Deserialize)]
 struct TossError {
@@ -186,7 +206,7 @@ impl TossConfig {
     ///    `Idempotency-Key`는 주문 번호다. 같은 주문서를 두 번 승인해도 토스는 첫 응답을 다시 준다.
     ///    `TOSS_TEST_FAIL_CODE`가 있으면 `TossPayments-Test-Code` 헤더를 붙인다.
     /// 2. 승인이 오류를 주면 실패라고 단정하지 않는다. 이미 승인됐을 수 있으므로 주문 번호로
-    ///    다시 조회해 실제 상태로 판단한다(조회도 오류면 승인 오류를 그대로 알려 준다).
+    ///    다시 조회해 확실한 결과일 때만 판단한다([`after_confirm_error`]).
     pub async fn approve(&self, payment_key: &str, order_id: &str, amount: i64) -> Approval {
         let mut request = http()
             .post(format!("{}/v1/payments/confirm", self.api_url))
@@ -203,18 +223,10 @@ impl TossConfig {
         match send(request).await {
             Answer::Payment(payment) => judge(payment),
             Answer::Unreachable(message) => Approval::Unknown { message },
-            Answer::Error { status, error } => match self.lookup_by_order_id(order_id).await {
-                Answer::Payment(payment) => judge(payment),
-                // 다시 조회해도 결제가 없으면 승인 오류가 결과다. 토스 내부 오류(5xx)는 다시 해 볼 수 있다.
-                _ if status >= 500 => Approval::Unknown {
-                    message: error.message,
-                },
-                _ => Approval::Declined {
-                    ending: Ending::Failed,
-                    code: error.code,
-                    message: error.message,
-                },
-            },
+            Answer::Error { status, error } => {
+                let lookup = self.lookup_by_order_id(order_id).await;
+                after_confirm_error(status, error, lookup)
+            }
         }
     }
 
@@ -278,6 +290,44 @@ async fn send(request: reqwest::RequestBuilder) -> Answer {
         }
     }
 }
+
+/// 승인 오류 뒤 주문 번호로 다시 조회한 결과(`lookup`)로 판단한다.
+///
+/// 승인이 오류여도 돈이 나갔을 수 있으므로 확실한 조회 결과만 판단에 쓴다.
+/// - 결제가 조회되면 그 결제의 상태로 판단한다. 승인되지 않은 결제면 실패 이유는 승인 오류의 코드·메시지다
+///   (`REJECT_CARD_PAYMENT`처럼 사용자에게 더 쓸모 있는 이유다).
+/// - 조회가 `NOT_FOUND_PAYMENT`면 결제가 없다. 승인 오류가 다시 해 볼 수 있는 오류(5xx, 429, 409 처리 중)가
+///   아니면 승인 오류가 결과다.
+/// - 그 밖(닿지 않음, 5xx, 429, 409, 읽지 못한 응답)은 아직 모른다. 주문서는 결제 대기로 남는다.
+fn after_confirm_error(status: u16, error: TossError, lookup: Answer) -> Approval {
+    let retryable = status >= 500 || status == 429 || error.code == IDEMPOTENT_REQUEST_PROCESSING;
+    match lookup {
+        Answer::Payment(payment) => match judge(payment) {
+            Approval::Declined { ending, .. } => Approval::Declined {
+                ending,
+                code: error.code,
+                message: error.message,
+            },
+            approval => approval,
+        },
+        Answer::Error {
+            status: 404,
+            error: lookup,
+        } if lookup.code == NOT_FOUND_PAYMENT && !retryable => Approval::Declined {
+            ending: Ending::Failed,
+            code: error.code,
+            message: error.message,
+        },
+        Answer::Error { .. } | Answer::Unreachable(_) => Approval::Unknown {
+            message: error.message,
+        },
+    }
+}
+
+/// 같은 `Idempotency-Key`의 앞선 요청이 아직 처리 중이라는 토스 오류(409).
+const IDEMPOTENT_REQUEST_PROCESSING: &str = "IDEMPOTENT_REQUEST_PROCESSING";
+/// 조회한 결제가 없다는 토스 오류(404).
+const NOT_FOUND_PAYMENT: &str = "NOT_FOUND_PAYMENT";
 
 /// 토스 결제 키 모양인지(1~200자, 영문·숫자·`-`·`_`). 조회 주소 경로에 그대로 넣으므로
 /// `/`·`.` 같은 글자로 다른 주소를 부르지 못하게 한다.

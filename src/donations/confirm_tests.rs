@@ -352,3 +352,84 @@ async fn futures_join<F: std::future::Future<Output = (StatusCode, Value)> + Sen
     }
     results
 }
+
+#[sqlx::test]
+async fn 이미_처리됨_오류에_조회가_실패하면_결제_대기로_남는다(
+    pool: PgPool,
+) {
+    // 토스가 "이미 처리됨"이라고 했는데 조회가 내부 오류면, 돈이 나갔을 수 있다. 실패로 단정하지 않는다.
+    let s = Setup::new(&pool).await;
+    let order_id = s.order(5000, None).await;
+    s.toss.on_confirm(Reply::error(
+        400,
+        "ALREADY_PROCESSED_PAYMENT",
+        "이미 처리된 결제 입니다.",
+    ));
+    s.toss.on_lookup(Reply::error(
+        500,
+        "FAILED_INTERNAL_SYSTEM_PROCESSING",
+        "내부 오류",
+    ));
+
+    let (status, json) = confirm(&s.router, "pay_1", &order_id, 5000).await;
+
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{json}");
+    assert_eq!(json["code"], "payment_unknown");
+    assert_eq!(s.summary().await["count"], 0);
+
+    // 토스가 돌아와 DONE을 알려 주면 확정된다.
+    s.toss
+        .on_lookup(Reply::payment("DONE", "pay_1", &order_id, 5000));
+    let (status, json) = confirm(&s.router, "pay_1", &order_id, 5000).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["status"], "confirmed");
+    assert_eq!(s.summary().await["count"], 1);
+}
+
+#[sqlx::test]
+async fn 처리_중_오류에_조회도_실패하면_결제_대기로_남는다(pool: PgPool) {
+    // 409 IDEMPOTENT_REQUEST_PROCESSING: 앞선 승인 요청이 아직 처리 중이다.
+    let s = Setup::new(&pool).await;
+    let order_id = s.order(5000, None).await;
+    s.toss.on_confirm(Reply::error(
+        409,
+        "IDEMPOTENT_REQUEST_PROCESSING",
+        "이전 요청이 처리 중입니다.",
+    ));
+    for lookup in [
+        Reply::error(503, "FAILED_INTERNAL_SYSTEM_PROCESSING", "내부 오류"),
+        Reply::error(429, "TOO_MANY_REQUESTS", "요청이 많아요"),
+        Reply::error(404, "NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다."),
+    ] {
+        s.toss.on_lookup(lookup);
+        let (status, json) = confirm(&s.router, "pay_1", &order_id, 5000).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{json}");
+        assert_eq!(json["code"], "payment_unknown");
+    }
+    assert_eq!(s.summary().await["count"], 0);
+
+    // 처리가 끝나 DONE이 되면 다시 확인할 때 확정된다.
+    s.toss
+        .on_confirm(Reply::payment("DONE", "pay_1", &order_id, 5000));
+    let (status, json) = confirm(&s.router, "pay_1", &order_id, 5000).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["status"], "confirmed");
+}
+
+#[sqlx::test]
+async fn 조회한_결제가_done이_아니면_승인_오류의_코드가_실패_이유다(
+    pool: PgPool,
+) {
+    // TOSS_TEST_FAIL_CODE로 승인을 거절시키고, 조회하면 결제는 중단(ABORTED)이다.
+    let s = Setup::with_fail_code(&pool, Some("REJECT_CARD_PAYMENT")).await;
+    let order_id = s.order(5000, None).await;
+    s.toss
+        .add_payment(Reply::payment("ABORTED", "pay_1", &order_id, 5000));
+
+    let (status, json) = confirm(&s.router, "pay_1", &order_id, 5000).await;
+
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["status"], "failed");
+    assert_eq!(json["code"], "REJECT_CARD_PAYMENT");
+    assert_eq!(s.toss.lookup_requests().len(), 1);
+}

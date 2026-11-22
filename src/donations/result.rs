@@ -8,7 +8,8 @@ use serde_json::json;
 
 use super::panel::TEST_PAYMENT_NOTICE;
 use super::rules::format_won;
-use super::ConfirmResult;
+use super::toss;
+use super::{ConfirmResult, OrderStatus};
 use crate::login::call_api;
 use crate::Route;
 
@@ -42,7 +43,7 @@ pub fn DonationSuccess(query: String) -> Element {
                 Shown::Checking => rsx! {
                     p { "결제를 확인하는 중…" }
                 },
-                Shown::Done(result) if result.status == "confirmed" => rsx! {
+                Shown::Done(result) if result.status == OrderStatus::Confirmed => rsx! {
                     h1 { "후원이 완료되었습니다" }
                     p { class: "donation-result-amount", "{format_won(result.amount)}" }
                     if let Some(id) = result.broadcast_id {
@@ -120,9 +121,6 @@ async fn report_failure(query: &str) -> Option<ConfirmResult> {
     }
 }
 
-/// 토스가 "구매자가 취소했다"고 알리는 코드.
-const CANCEL_CODES: [&str; 2] = ["PAY_PROCESS_CANCELED", "USER_CANCEL"];
-
 /// 실패 화면의 안내 문구.
 #[derive(Debug, PartialEq)]
 struct FailNotice {
@@ -147,12 +145,14 @@ fn fail_notice(
         title,
         detail: None,
     };
-    match result.map(|r| r.status.as_str()) {
-        Some("canceled") => bare(CANCELED),
-        Some("expired") => bare("시간이 지나 결제가 취소되었어요"),
-        Some("confirmed") => bare("이미 후원이 완료되었어요"),
-        Some(_) => failed(result.and_then(|r| r.message.as_deref())),
-        None if code.is_some_and(|c| CANCEL_CODES.contains(&c)) => bare(CANCELED),
+    match result.map(|r| r.status) {
+        Some(OrderStatus::Canceled) => bare(CANCELED),
+        Some(OrderStatus::Expired) => bare("시간이 지나 결제가 취소되었어요"),
+        Some(OrderStatus::Confirmed) => bare("이미 후원이 완료되었어요"),
+        Some(OrderStatus::Failed | OrderStatus::Pending) => {
+            failed(result.and_then(|r| r.message.as_deref()))
+        }
+        None if code.is_some_and(toss::is_buyer_cancel) => bare(CANCELED),
         None => failed(message),
     }
 }
@@ -258,9 +258,9 @@ mod tests {
         assert_eq!(query_value("a=%zz%4", "a").as_deref(), Some("%zz%4"));
     }
 
-    fn result(status: &str, message: Option<&str>) -> ConfirmResult {
+    fn result(status: OrderStatus, message: Option<&str>) -> ConfirmResult {
         ConfirmResult {
-            status: status.into(),
+            status,
             broadcast_id: Some(1),
             amount: 5000,
             code: Some("X".into()),
@@ -289,17 +289,20 @@ mod tests {
 
     #[test]
     fn 서버가_알려_준_상태를_주소보다_믿는다() {
-        let expired = result("expired", Some("시간이 지나 결제가 취소되었어요."));
+        let expired = result(
+            OrderStatus::Expired,
+            Some("시간이 지나 결제가 취소되었어요."),
+        );
         let notice = fail_notice(Some("PAY_PROCESS_CANCELED"), None, Some(&expired));
         assert_eq!(notice.title, "시간이 지나 결제가 취소되었어요");
         assert_eq!(notice.detail, None);
 
-        let failed = result("failed", Some("거절"));
+        let failed = result(OrderStatus::Failed, Some("거절"));
         let notice = fail_notice(Some("USER_CANCEL"), None, Some(&failed));
         assert_eq!(notice.title, "결제에 실패했어요");
         assert_eq!(notice.detail.as_deref(), Some("거절"));
 
-        let confirmed = result("confirmed", None);
+        let confirmed = result(OrderStatus::Confirmed, None);
         let notice = fail_notice(Some("USER_CANCEL"), None, Some(&confirmed));
         assert_eq!(notice.title, "이미 후원이 완료되었어요");
     }

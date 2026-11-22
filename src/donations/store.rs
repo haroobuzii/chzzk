@@ -1,7 +1,8 @@
 //! 주문서 저장소: 주문서를 만들고, 주문 번호로 찾고, 상태를 바꾸고, 방송별 확정된 후원을 읽는다.
 //!
-//! 상태 바꾸기는 "결제 대기일 때만"을 조건으로 하는 UPDATE 하나로 한다. 그래서 동시에 온 확인 중
-//! 하나만 이기고, 확정·실패·취소·만료는 되돌아가지 않는다.
+//! 상태 바꾸기는 조건부 UPDATE 하나로 한다. 실패·취소·만료는 "결제 대기일 때만" 바뀌므로 동시에 온
+//! 확인 중 하나만 이긴다. 확정은 "확정이 아닐 때만" 바뀐다. 결제 회사가 승인을 마친 결제는 돈이 이미
+//! 나갔으므로 만료·실패·취소된 주문서도 확정한다(ADR 0007). 확정은 되돌아가지 않는다.
 
 use chrono::{DateTime, Utc};
 use rand::RngCore;
@@ -18,16 +19,6 @@ pub fn new_order_id() -> String {
     let mut bytes = [0u8; 24];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     format!("{ORDER_ID_PREFIX}{}", hex::encode(bytes))
-}
-
-/// 토스 `orderId` 규칙(6~64자, 영문·숫자·`-`·`_`)에 맞는지. DB의 `CHECK`와 같다.
-/// 지금은 테스트가 주문 번호 형식을 확인할 때만 쓴다.
-#[cfg(test)]
-pub fn is_valid_order_id(order_id: &str) -> bool {
-    (6..=64).contains(&order_id.len())
-        && order_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// 후원받을 방송. 화면에 보이는 방송만 찾는다.
@@ -79,39 +70,7 @@ pub async fn create(pool: &PgPool, order: NewOrder<'_>) -> sqlx::Result<String> 
     Ok(order_id)
 }
 
-/// 주문서 상태. DB의 `status` 글자와 같다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OrderStatus {
-    Pending,
-    Confirmed,
-    Failed,
-    Canceled,
-    Expired,
-}
-
-impl OrderStatus {
-    /// DB·API에 쓰는 이름.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Confirmed => "confirmed",
-            Self::Failed => "failed",
-            Self::Canceled => "canceled",
-            Self::Expired => "expired",
-        }
-    }
-
-    fn parse(text: &str) -> Self {
-        match text {
-            "confirmed" => Self::Confirmed,
-            "failed" => Self::Failed,
-            "canceled" => Self::Canceled,
-            "expired" => Self::Expired,
-            // DB의 CHECK가 다섯 값만 허락한다.
-            _ => Self::Pending,
-        }
-    }
-}
+pub use super::OrderStatus;
 
 /// 저장된 주문서 하나.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -173,21 +132,40 @@ pub async fn find_by_order_id(pool: &PgPool, order_id: &str) -> sqlx::Result<Opt
     ))
 }
 
-/// 결제 대기일 때만 확정하고 결제 키를 남긴다. 바꿨으면 `true`, 이미 결제 대기가 아니면 `false`.
+/// 확정되지 않은 주문서(결제 대기·실패·취소·만료)를 확정하고 결제 키를 남긴다.
+/// 결제 회사가 승인을 마쳤다고 확인한 결제 키로만 부른다(돈이 이미 나갔다).
+///
+/// 바꿨으면 바뀌기 전 상태를, 이미 확정이었으면 `None`을 돌려준다. 확정된 주문서는 건드리지 않는다.
 pub async fn mark_confirmed(
     pool: &PgPool,
     order_id: &str,
     payment_key: &str,
-) -> sqlx::Result<bool> {
-    let result = sqlx::query(
-        "UPDATE donation_orders SET status = 'confirmed', payment_key = $2, confirmed_at = now()
-         WHERE order_id = $1 AND status = 'pending'",
+) -> sqlx::Result<Option<OrderStatus>> {
+    let before: Option<String> = sqlx::query_scalar(
+        "UPDATE donation_orders o
+         SET status = 'confirmed', payment_key = $2, confirmed_at = now(),
+             failure_code = NULL, failure_message = NULL
+         FROM (SELECT id, status FROM donation_orders WHERE order_id = $1 FOR UPDATE) before
+         WHERE o.id = before.id AND before.status <> 'confirmed'
+         RETURNING before.status",
     )
     .bind(order_id)
     .bind(payment_key)
-    .execute(pool)
+    .fetch_optional(pool)
     .await?;
-    Ok(result.rows_affected() == 1)
+    Ok(before.as_deref().map(OrderStatus::parse))
+}
+
+/// 결제 대기일 때만 만료로 바꾼다. 바꿨으면 `true`.
+pub async fn mark_expired(pool: &PgPool, order_id: &str) -> sqlx::Result<bool> {
+    mark_ended(
+        pool,
+        order_id,
+        OrderStatus::Expired,
+        EXPIRED_CODE,
+        EXPIRED_MESSAGE,
+    )
+    .await
 }
 
 /// 만료 코드. 만료된 주문서의 실패 코드로 남는다.
@@ -195,7 +173,7 @@ pub const EXPIRED_CODE: &str = "expired";
 /// 만료 안내. 결과 화면이 그대로 보여 준다.
 pub const EXPIRED_MESSAGE: &str = "시간이 지나 결제가 취소되었어요.";
 
-/// `cutoff`보다 먼저 만든 결제 대기 주문서의 주문 번호. 만료 정리가 하나씩 [`mark_ended`]로 바꾼다.
+/// `cutoff`보다 먼저 만든 결제 대기 주문서의 주문 번호. 만료 정리가 하나씩 [`mark_expired`]로 바꾼다.
 pub async fn pending_created_before(
     pool: &PgPool,
     cutoff: DateTime<Utc>,
@@ -261,6 +239,7 @@ pub async fn confirmed_for_broadcast(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::donations::tests::is_valid_order_id;
 
     #[test]
     fn 주문_번호는_토스_규칙에_맞는다() {

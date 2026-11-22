@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeDelta, Utc};
 use sqlx::PgPool;
 
-use super::store::{self, OrderStatus};
+use super::store;
 
 /// 정리 간격.
 pub const INTERVAL: Duration = Duration::from_secs(60);
@@ -22,19 +22,12 @@ pub fn cutoff(now: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 /// 한 번 정리한다. 결제 대기로 30분이 지난 주문서만 만료로 바꾸고, 바꾼 개수를 돌려준다.
-/// 조건부 전환이라 확정·실패·취소된 주문서는 바뀌지 않는다.
+/// 조건부 전환이라 확정·실패·취소된 주문서는 바뀌지 않는다. 만료된 뒤에도 결제 회사가 승인을 마친
+/// 결제가 확인되면 확정된다([`super::confirm::settle`]).
 pub async fn expire_once(pool: &PgPool, now: DateTime<Utc>) -> sqlx::Result<u64> {
     let mut expired = 0;
     for order_id in store::pending_created_before(pool, cutoff(now)).await? {
-        let changed = store::mark_ended(
-            pool,
-            &order_id,
-            OrderStatus::Expired,
-            store::EXPIRED_CODE,
-            store::EXPIRED_MESSAGE,
-        )
-        .await?;
-        expired += u64::from(changed);
+        expired += u64::from(store::mark_expired(pool, &order_id).await?);
     }
     Ok(expired)
 }

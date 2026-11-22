@@ -10,7 +10,7 @@
 //! - `confirm`: 승인 확인. 결과 화면과 승인 통지가 함께 쓴다.
 //! - `expiry`: 만료 정리. 결제 대기로 30분이 지난 주문서를 1분마다 만료로 바꾼다.
 //! - `webhook`: 승인 통지. 결제 키로 토스에 다시 조회해 승인 확인에 넘긴다.
-//! - [`toss`]: 결제 연결. 토스와 주고받는 코드는 이 모듈에만 둔다.
+//! - [`toss`]: 결제 연결. 토스와 주고받는 코드와 토스 코드 이름은 이 모듈에만 둔다.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,6 @@ pub mod rules;
 pub mod store;
 #[cfg(test)]
 pub(crate) mod tests;
-#[cfg(feature = "server")]
 pub mod toss;
 #[cfg(feature = "server")]
 mod webhook;
@@ -80,12 +79,55 @@ pub struct CreatedOrder {
     pub client_key: String,
 }
 
+/// 주문서 상태. DB의 `status` 글자, API 응답의 `status`와 같다(`pending`, `confirmed`, …).
+/// 서버와 화면이 함께 쓴다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OrderStatus {
+    /// 결제 대기.
+    Pending,
+    /// 확정. 후원 한 건이 된다.
+    Confirmed,
+    /// 실패.
+    Failed,
+    /// 취소.
+    Canceled,
+    /// 만료.
+    Expired,
+}
+
+#[cfg(feature = "server")]
+impl OrderStatus {
+    /// DB에 쓰는 이름.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Confirmed => "confirmed",
+            Self::Failed => "failed",
+            Self::Canceled => "canceled",
+            Self::Expired => "expired",
+        }
+    }
+
+    /// DB의 이름을 읽는다.
+    pub(crate) fn parse(text: &str) -> Self {
+        match text {
+            "confirmed" => Self::Confirmed,
+            "failed" => Self::Failed,
+            "canceled" => Self::Canceled,
+            "expired" => Self::Expired,
+            // DB의 CHECK가 다섯 값만 허락한다.
+            _ => Self::Pending,
+        }
+    }
+}
+
 /// `POST /api/donations/confirm`의 응답: 승인 확인이 끝난 주문서의 상태.
 /// 같은 확인 요청을 다시 보내도 같은 값이다.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConfirmResult {
-    /// `confirmed`(확정), `failed`(실패), `canceled`(취소), `expired`(만료).
-    pub status: String,
+    /// 확정·실패·취소·만료.
+    pub status: OrderStatus,
     /// 후원한 방송. 방송이 지워졌으면 `None`.
     pub broadcast_id: Option<i64>,
     /// 주문서 금액(원).

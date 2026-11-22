@@ -30,6 +30,14 @@ fn fake_toss() -> TossConfig {
     .unwrap()
 }
 
+/// 토스 `orderId` 규칙(6~64자, 영문·숫자·`-`·`_`)에 맞는지. DB의 `CHECK`와 같다.
+pub(super) fn is_valid_order_id(order_id: &str) -> bool {
+    (6..=64).contains(&order_id.len())
+        && order_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// 실제 서버처럼 `Origin` 확인을 씌운 후원 라우터. 토스 키가 있다.
 pub(super) fn router(pool: &PgPool) -> Router {
     router_with(pool, Some(fake_toss()))
@@ -167,7 +175,7 @@ async fn 주문서를_만들면_201이고_결제_대기라_합계와_내역에_�
         "금액이 보인다: {order_name}"
     );
     let order_id = json["order_id"].as_str().unwrap();
-    assert!(super::store::is_valid_order_id(order_id), "{order_id}");
+    assert!(is_valid_order_id(order_id), "{order_id}");
     assert!(json.get("secret_key").is_none());
     assert!(
         !json.to_string().contains("test_sk_fake"),

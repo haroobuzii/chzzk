@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::rules::{format_won, validate_amount, validate_message, MessageTooLong};
+use super::toss;
 use super::{CreatedOrder, DonationSummary};
 use crate::login::{call_api, use_login_state, LoginState};
 use crate::refresh::{sleep_ms, REFRESH_MS};
@@ -259,7 +260,7 @@ async fn open_payment_window(order: &CreatedOrder) -> Result<(), String> {
     }
     match reply.code.as_deref() {
         None => Ok(()),
-        Some("USER_CANCEL") | Some("PAY_PROCESS_CANCELED") => Err("결제를 취소했습니다.".into()),
+        Some(code) if toss::is_buyer_cancel(code) => Err("결제를 취소했습니다.".into()),
         Some(_) => Err(reply
             .message
             .unwrap_or_else(|| "결제창을 열지 못했어요.".into())),
