@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use crate::comments::CommentSection;
 use crate::display::{broadcast_duration, Mark};
+use crate::donations::DonationPanel;
 use crate::login::call_api;
 use crate::manage::OwnerActions;
 use crate::refresh::{sleep_ms, REFRESH_MS};
@@ -90,6 +91,12 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
                 }
             }
             Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
+        }
+        // 방송 중이면 후원 내역을 5초마다 다시 불러온다. 종료된 방송에도 후원할 수 있다.
+        DonationPanel {
+            broadcast_id: broadcast.id,
+            owner: broadcast.owner.clone(),
+            live: broadcast.mark() == Mark::Live,
         }
         // 방송 중이면 댓글을 3초마다 다시 불러온다. 종료된 방송에도 댓글을 쓸 수 있다.
         CommentSection { broadcast_id: broadcast.id, live: broadcast.mark() == Mark::Live }

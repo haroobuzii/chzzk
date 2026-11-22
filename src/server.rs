@@ -22,6 +22,9 @@ pub async fn router() -> anyhow::Result<Router> {
         let _ = dotenvy::dotenv();
 
         let config = Config::from_env()?;
+        if config.toss.is_none() {
+            log::warn!("TOSS_CLIENT_KEY·TOSS_SECRET_KEY가 없어 후원 기능을 끈 채로 켭니다.");
+        }
         let pool = crate::db::connect(&config.database_url)
             .await
             .map_err(|e| anyhow!("DB에 접속하지 못했습니다: {e}"))?;
@@ -47,7 +50,12 @@ pub async fn router() -> anyhow::Result<Router> {
         videos: crate::videos::VideoStore::new(&config().data_dir),
         mediamtx: MEDIAMTX.get().expect("위에서 정했다").clone(),
     };
-    // Dioxus가 만든 화면·서버 함수 라우터에 로그인 API, 등록 API, 라이브 API, 댓글 API, 방송 관리 API 라우트를 덧붙인다.
+    let donations = crate::donations::DonationsState {
+        pool: pool().clone(),
+        toss: config().toss.clone(),
+    };
+    // Dioxus가 만든 화면·서버 함수 라우터에 로그인 API, 등록 API, 라이브 API, 댓글 API, 방송 관리 API,
+    // 후원 API 라우트를 덧붙인다.
     // 다른 출처에서 온 상태 변경 요청은 어느 라우트든 막는다.
     Ok(crate::auth::guard_origin(
         dioxus::server::router(crate::App)
@@ -55,7 +63,8 @@ pub async fn router() -> anyhow::Result<Router> {
             .merge(crate::routes::api(state))
             .merge(crate::live::api(live))
             .merge(crate::comments::api(pool().clone()))
-            .merge(crate::manage::api(manage)),
+            .merge(crate::manage::api(manage))
+            .merge(crate::donations::api(donations)),
     ))
 }
 

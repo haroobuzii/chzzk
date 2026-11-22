@@ -14,6 +14,7 @@ mod config;
 #[cfg(feature = "server")]
 mod db;
 mod display;
+mod donations;
 #[cfg(feature = "server")]
 mod live;
 mod login;
@@ -35,6 +36,7 @@ mod viewer;
 
 use comments::CommentSection;
 use display::Mark;
+use donations::DonationPanel;
 use login::{HeaderLogin, Login, RequireLogin, Signup};
 use manage::OwnerActions;
 use publisher::NewLive;
@@ -338,6 +340,7 @@ fn RecordedDetail(broadcast: Broadcast) -> Element {
             }
             Link { class: "back-link", to: Route::BroadcastList {}, "← 목록으로" }
         }
+        DonationPanel { broadcast_id: broadcast.id, owner: broadcast.owner.clone(), live: false }
         CommentSection { broadcast_id: broadcast.id, live: false }
     }
 }

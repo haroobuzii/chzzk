@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 
+use crate::donations::toss::TossConfig;
+
 /// 업로드 최대 크기 기본값: 2 GiB.
 const DEFAULT_MAX_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -21,11 +23,13 @@ pub struct Config {
     pub mediamtx_api_url: String,
     /// MediaMTX 경로 앞부분. 기본 `live`. 작업 폴더마다 다르게 두면 MediaMTX를 함께 써도 방송이 섞이지 않는다.
     pub live_path_prefix: String,
+    /// 토스 테스트 키와 API 설정. 키가 둘 다 없으면 `None`이고 후원 기능이 꺼진다.
+    pub toss: Option<TossConfig>,
 }
 
 impl Config {
     /// `DATABASE_URL`, `DATA_DIR`, `MAX_UPLOAD_BYTES`, `MEDIAMTX_WEBRTC_URL`, `MEDIAMTX_API_URL`,
-    /// `LIVE_PATH_PREFIX`를 읽는다.
+    /// `LIVE_PATH_PREFIX`, `TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`, `TOSS_API_URL`, `TOSS_TEST_FAIL_CODE`를 읽는다.
     /// 비어 있거나 없는 값은 기본값을 쓴다(`DATABASE_URL` 제외).
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = read("DATABASE_URL").context("DATABASE_URL 환경 변수가 필요합니다")?;
@@ -43,6 +47,13 @@ impl Config {
                 "LIVE_PATH_PREFIX는 영문 소문자, 숫자, -, _만 쓸 수 있습니다: {live_path_prefix}"
             );
         }
+        let toss = TossConfig::from_values(
+            read("TOSS_CLIENT_KEY"),
+            read("TOSS_SECRET_KEY"),
+            read("TOSS_API_URL"),
+            read("TOSS_TEST_FAIL_CODE"),
+        )
+        .map_err(anyhow::Error::msg)?;
         Ok(Self {
             database_url,
             data_dir,
@@ -52,6 +63,7 @@ impl Config {
             mediamtx_api_url: read("MEDIAMTX_API_URL")
                 .unwrap_or_else(|| "http://localhost:9997".into()),
             live_path_prefix,
+            toss,
         })
     }
 }

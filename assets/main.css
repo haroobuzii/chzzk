@@ -509,6 +509,138 @@ h1 {
     cursor: pointer;
 }
 
+/* 상세 화면의 후원 칸: 테스트 결제 표시, 합계·내역, 금액·메시지 입력 */
+.donations {
+    max-width: 960px;
+    margin: 28px auto 0;
+    padding-top: 20px;
+    border-top: 1px solid #26282e;
+}
+
+.test-payment {
+    display: inline-block;
+    margin: 0 0 12px;
+    padding: 4px 10px;
+    font-size: 13px;
+    color: #ffd27a;
+    background: #2a2414;
+    border: 1px solid #5a4a1e;
+    border-radius: 6px;
+}
+
+.donation-total {
+    margin: 0 0 10px;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.donation-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0 0 18px;
+    padding: 0;
+    list-style: none;
+}
+
+.donation-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.donation-donor {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.donation-amount {
+    font-weight: 700;
+    color: #7ee2a8;
+}
+
+.donation-message {
+    margin: 4px 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.donation-empty,
+.donation-hint {
+    color: #a0a3ab;
+}
+
+.donation-hint {
+    margin: 0;
+    font-size: 13px;
+}
+
+.donation-disabled {
+    color: #ffd27a;
+}
+
+.donation-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.donation-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.donation-presets .preset {
+    padding: 8px 12px;
+    font: inherit;
+    font-size: 15px;
+    color: #e8e8ea;
+    background: #17181c;
+    border: 1px solid #33363d;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.donation-presets .preset.selected {
+    border-color: #7ee2a8;
+    color: #7ee2a8;
+}
+
+.donation-amount-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #c4c6cc;
+}
+
+.donation-amount-input input,
+.donation-form textarea {
+    min-width: 0;
+    padding: 10px 12px;
+    font: inherit;
+    font-size: 16px;
+    color: #e8e8ea;
+    background: #17181c;
+    border: 1px solid #33363d;
+    border-radius: 8px;
+}
+
+.donation-amount-input input {
+    width: 10em;
+}
+
+.donation-form textarea {
+    resize: vertical;
+}
+
+.donation-form .button {
+    align-self: flex-start;
+    border: none;
+    cursor: pointer;
+}
+
 /* 상세 화면의 소유자 버튼 줄: 제목 수정, 삭제, (라이브) 방송 종료. 좁은 화면에서는 줄을 바꾼다. */
 .owner-actions {
     display: flex;
