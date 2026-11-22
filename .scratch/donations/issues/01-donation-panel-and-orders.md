@@ -25,7 +25,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] 주문서 만들기는 이렇게 응답한다. 결제 대기 주문서는 합계·내역에 나오지 않는다.
   - 비로그인 401, 없는 방송 404
