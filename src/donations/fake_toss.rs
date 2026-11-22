@@ -2,14 +2,16 @@
 //!
 //! 하는 일은 둘이다.
 //! - 받은 승인·조회 요청을 헤더까지 모두 기록한다.
-//! - 테스트가 정한 대답을 돌려준다. 정하지 않으면 승인은 받은 값 그대로 `DONE`, 조회는 404(`NOT_FOUND_PAYMENT`)다.
+//! - 테스트가 정한 대답을 돌려준다. 정하지 않으면 승인은 받은 값 그대로 `DONE`이다.
+//!   조회는 [`FakeToss::add_payment`]로 넣어 둔 결제를 결제 키·주문 번호로 찾아 주고, 없으면 404(`NOT_FOUND_PAYMENT`)다.
 //!
 //! 쓰는 법:
 //! ```ignore
 //! let toss = FakeToss::start().await;
 //! let config = toss.config();                                   // 우리 서버가 쓸 토스 설정(가짜 키)
 //! toss.on_confirm(Reply::error(403, "REJECT_CARD_COMPANY", "거절"));
-//! toss.on_lookup(Reply::payment("DONE", "pay_1", "don_…", 5000));
+//! toss.on_lookup(Reply::payment("DONE", "pay_1", "don_…", 5000)); // 모든 조회에 같은 대답
+//! toss.add_payment(Reply::payment("DONE", "pay_1", "don_…", 5000)); // 이 결제 키·주문 번호로만 찾힌다
 //! assert!(toss.confirm_requests().is_empty());                  // 승인 요청이 가지 않았는지
 //! ```
 
@@ -89,6 +91,8 @@ struct Inner {
     requests: Vec<CapturedRequest>,
     confirm: Option<Reply>,
     lookup: Option<Reply>,
+    /// 조회로 찾을 수 있는 결제들(토스 Payment 객체).
+    payments: Vec<Value>,
 }
 
 #[derive(Clone)]
@@ -134,6 +138,15 @@ impl FakeToss {
     /// 조회 요청(결제 키·주문 번호 둘 다)에 줄 대답을 정한다.
     pub fn on_lookup(&self, reply: Reply) {
         self.inner.lock().unwrap().lookup = Some(reply);
+    }
+
+    /// 조회로 찾을 수 있는 결제를 넣는다. 같은 결제 키가 이미 있으면 바꾼다.
+    /// `on_lookup`으로 정한 대답이 있으면 그쪽이 먼저다.
+    pub fn add_payment(&self, payment: Reply) {
+        let mut inner = self.inner.lock().unwrap();
+        let key = payment.body["paymentKey"].clone();
+        inner.payments.retain(|p| p["paymentKey"] != key);
+        inner.payments.push(payment.body);
     }
 
     /// 지금까지 받은 요청 전부.
@@ -187,7 +200,19 @@ async fn handle(
         })
     } else if method == Method::GET && path.starts_with("/v1/payments/") {
         inner.lookup.clone().unwrap_or_else(|| {
-            Reply::error(404, "NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다.")
+            // `/v1/payments/orders/{주문 번호}` 또는 `/v1/payments/{결제 키}`
+            let rest = &path["/v1/payments/".len()..];
+            let found = match rest.strip_prefix("orders/") {
+                Some(order_id) => inner.payments.iter().find(|p| p["orderId"] == order_id),
+                None => inner.payments.iter().find(|p| p["paymentKey"] == rest),
+            };
+            match found {
+                Some(payment) => Reply {
+                    status: StatusCode::OK,
+                    body: payment.clone(),
+                },
+                None => Reply::error(404, "NOT_FOUND_PAYMENT", "존재하지 않는 결제 정보 입니다."),
+            }
         })
     } else {
         Reply::error(404, "NOT_FOUND", "가짜 토스에 없는 주소")

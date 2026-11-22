@@ -190,6 +190,31 @@ pub async fn mark_failed(
     Ok(result.rows_affected() == 1)
 }
 
+/// 결제 대기일 때만 실패·취소·만료(`status`)로 바꾸고 코드와 메시지를 남긴다. 바꿨으면 `true`.
+pub async fn mark_ended(
+    pool: &PgPool,
+    order_id: &str,
+    status: OrderStatus,
+    code: &str,
+    message: &str,
+) -> sqlx::Result<bool> {
+    debug_assert!(matches!(
+        status,
+        OrderStatus::Failed | OrderStatus::Canceled | OrderStatus::Expired
+    ));
+    let result = sqlx::query(
+        "UPDATE donation_orders SET status = $2, failure_code = $3, failure_message = $4
+         WHERE order_id = $1 AND status = 'pending'",
+    )
+    .bind(order_id)
+    .bind(status.as_str())
+    .bind(code)
+    .bind(message)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 /// 방송의 확정된 후원을 최신순으로 읽는다. 같은 시각이면 나중에 만든 주문서가 앞이다.
 pub async fn confirmed_for_broadcast(
     pool: &PgPool,

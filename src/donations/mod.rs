@@ -1,12 +1,13 @@
 //! 후원: 로그인한 사용자가 방송 소유자에게 토스페이먼츠 테스트 결제로 돈을 보낸다(ADR 0007).
 //!
 //! 서버 쪽은 `POST`·`GET /api/broadcasts/{번호}/donations` 라우트(주문서 만들기, 합계·내역)와
-//! `POST /api/donations/confirm`(승인 확인), 화면 쪽은 상세 화면의 후원 칸([`DonationPanel`])과
+//! `POST /api/donations/confirm`(승인 확인), `POST /api/payments/toss-webhook`(승인 통지), 화면 쪽은 상세 화면의 후원 칸([`DonationPanel`])과
 //! 결제 뒤 돌아오는 결과 화면([`DonationSuccess`])이다.
 //!
 //! - [`rules`]: 금액·메시지 규칙(화면과 서버가 함께 쓴다)
 //! - `store`: 주문서 저장소
 //! - `confirm`: 승인 확인. 결과 화면과 승인 통지가 함께 쓴다.
+//! - `webhook`: 승인 통지. 결제 키로 토스에 다시 조회해 승인 확인에 넘긴다.
 //! - [`toss`]: 결제 연결. 토스와 주고받는 코드는 이 모듈에만 둔다.
 
 use chrono::{DateTime, Utc};
@@ -17,7 +18,7 @@ mod api;
 #[cfg(feature = "server")]
 pub mod confirm;
 #[cfg(test)]
-mod confirm_tests;
+pub(crate) mod confirm_tests;
 #[cfg(test)]
 pub mod fake_toss;
 mod panel;
@@ -26,9 +27,13 @@ pub mod rules;
 #[cfg(feature = "server")]
 pub mod store;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(feature = "server")]
 pub mod toss;
+#[cfg(feature = "server")]
+mod webhook;
+#[cfg(test)]
+mod webhook_tests;
 
 #[cfg(feature = "server")]
 pub use api::{api, DonationsState};

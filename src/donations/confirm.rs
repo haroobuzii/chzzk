@@ -6,7 +6,7 @@
 use sqlx::PgPool;
 
 use super::store::{self, Order, OrderStatus};
-use super::toss::{Approval, TossConfig};
+use super::toss::{Approval, Ending, TossConfig};
 
 /// 결제창에서 돌아온 주소에 담긴 값. 브라우저가 보낸 값이라 그대로 믿지 않는다.
 pub struct Returned<'a> {
@@ -92,8 +92,17 @@ pub async fn settle(
             )
             .await?;
         }
-        Approval::Declined { code, message } => {
-            store::mark_failed(pool, &order.order_id, &code, &message).await?;
+        Approval::Declined {
+            ending,
+            code,
+            message,
+        } => {
+            let status = match ending {
+                Ending::Failed => OrderStatus::Failed,
+                Ending::Canceled => OrderStatus::Canceled,
+                Ending::Expired => OrderStatus::Expired,
+            };
+            store::mark_ended(pool, &order.order_id, status, &code, &message).await?;
         }
         Approval::Unknown { message } => return Err(ConfirmError::Unknown(message)),
     }

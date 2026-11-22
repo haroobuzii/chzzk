@@ -1,4 +1,4 @@
-//! 후원 HTTP 라우트. 주문서 만들기는 로그인한 사용자, 합계·내역과 승인 확인은 누구나.
+//! 후원 HTTP 라우트. 주문서 만들기는 로그인한 사용자, 합계·내역과 승인 확인·승인 통지는 누구나.
 //! 권한 검사는 [`CurrentUser`]를 거친다.
 
 use axum::{
@@ -40,6 +40,10 @@ pub fn api(state: DonationsState) -> Router {
     Router::new()
         .route("/api/broadcasts/{number}/donations", get(list).post(create))
         .route("/api/donations/confirm", post(confirm_returned))
+        .route(
+            "/api/payments/toss-webhook",
+            post(super::webhook::toss_webhook),
+        )
         .with_state(state)
 }
 

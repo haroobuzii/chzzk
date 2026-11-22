@@ -16,15 +16,15 @@ use super::tests::{donations, order, owned_broadcast, router_with, send};
 use crate::auth::personas::Persona;
 
 /// 가짜 토스를 쓰는 후원 라우터, A의 방송, 그 방송에 후원하는 B.
-struct Setup {
-    router: Router,
-    toss: FakeToss,
-    broadcast: i64,
+pub(super) struct Setup {
+    pub(super) router: Router,
+    pub(super) toss: FakeToss,
+    pub(super) broadcast: i64,
     donor: Persona,
 }
 
 impl Setup {
-    async fn new(pool: &PgPool) -> Self {
+    pub(super) async fn new(pool: &PgPool) -> Self {
         Self::with_fail_code(pool, None).await
     }
 
@@ -44,7 +44,7 @@ impl Setup {
     }
 
     /// 주문서 API로 결제 대기 주문서를 만들고 주문 번호를 돌려준다.
-    async fn order(&self, amount: i64, message: Option<&str>) -> String {
+    pub(super) async fn order(&self, amount: i64, message: Option<&str>) -> String {
         let (status, created) = order(
             &self.router,
             &self.donor,
@@ -56,13 +56,13 @@ impl Setup {
         created["order_id"].as_str().unwrap().to_string()
     }
 
-    async fn summary(&self) -> Value {
+    pub(super) async fn summary(&self) -> Value {
         donations(&self.router, self.broadcast).await.1
     }
 }
 
 /// 결과 화면처럼 비로그인으로 확인 API를 부른다.
-async fn confirm(
+pub(super) async fn confirm(
     router: &Router,
     payment_key: &str,
     order_id: &str,
