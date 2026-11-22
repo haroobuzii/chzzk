@@ -1,4 +1,4 @@
-//! 후원 HTTP 라우트. 주문서 만들기는 로그인한 사용자, 합계·내역과 승인 확인은 누구나.
+//! 후원 HTTP 라우트. 주문서 만들기와 실패 보고는 로그인한 사용자, 합계·내역과 승인 확인은 누구나.
 //! 권한 검사는 [`CurrentUser`]를 거친다.
 
 use axum::{
@@ -13,7 +13,7 @@ use sqlx::PgPool;
 
 use super::confirm::{self, ConfirmError, Returned};
 use super::rules::{format_won, validate_amount, validate_message, MessageTooLong};
-use super::store::{self, NewOrder, Order, OrderStatus};
+use super::store::{self, Abandoned, NewOrder, Order, OrderStatus};
 use super::toss::TossConfig;
 use super::{ConfirmResult, CreatedOrder, DonationSummary};
 use crate::auth::CurrentUser;
@@ -40,6 +40,7 @@ pub fn api(state: DonationsState) -> Router {
     Router::new()
         .route("/api/broadcasts/{number}/donations", get(list).post(create))
         .route("/api/donations/confirm", post(confirm_returned))
+        .route("/api/donations/fail", post(fail_returned))
         .with_state(state)
 }
 
@@ -194,6 +195,63 @@ async fn confirm_returned(
             )
         }
         Err(ConfirmError::Db(e)) => server_error("승인 확인", e),
+    }
+}
+
+/// 실패 보고 본문. 결제창이 `failUrl`로 돌려보낸 `code`·`message`·`orderId`다.
+/// 취소면 토스가 주문 번호를 주지 않을 수 있다.
+#[derive(Deserialize)]
+struct FailRequest {
+    order_id: Option<String>,
+    code: String,
+    message: Option<String>,
+}
+
+/// 토스가 "구매자가 취소했다"고 알리는 코드. failUrl의 `PAY_PROCESS_CANCELED`와 SDK의 `USER_CANCEL`.
+const CANCEL_CODES: [&str; 2] = ["PAY_PROCESS_CANCELED", "USER_CANCEL"];
+
+/// 남겨 둘 실패 코드·메시지의 최대 글자 수. 브라우저가 보낸 값이라 길이를 자른다.
+const MAX_CODE_CHARS: usize = 64;
+const MAX_MESSAGE_CHARS: usize = 200;
+
+/// `POST /api/donations/fail` `{order_id?, code, message?}`: 실패·취소 결과 화면이 부른다. 로그인 필요.
+///
+/// 로그인한 후원자 본인의 결제 대기 주문서만 바꾼다. 취소 코드([`CANCEL_CODES`])면 취소, 그 밖은 실패다.
+/// 본인 주문서면 200과 승인 확인과 같은 `{status, broadcast_id, amount, code?, message?}`를 준다.
+/// 이미 결제 대기가 아니면 바꾸지 않고 지금 상태를 준다.
+/// 주문 번호가 없거나 남의 주문서·없는 주문서면 아무것도 바꾸지 않고 204다.
+///
+/// 거절: 비로그인 401, 본문이 틀리면 400.
+async fn fail_returned(
+    State(state): State<DonationsState>,
+    current: CurrentUser,
+    body: Result<Json<FailRequest>, JsonRejection>,
+) -> Response {
+    let user = match current.require() {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    let Ok(Json(request)) = body else {
+        return bad_request("invalid_body", "결제 실패 코드가 없어요.");
+    };
+    let Some(order_id) = request.order_id.filter(|id| !id.is_empty()) else {
+        return StatusCode::NO_CONTENT.into_response();
+    };
+    let code: String = request.code.chars().take(MAX_CODE_CHARS).collect();
+    let to = if CANCEL_CODES.contains(&code.as_str()) {
+        Abandoned::Canceled
+    } else {
+        Abandoned::Failed
+    };
+    let message: String = match request.message.as_deref().map(str::trim) {
+        Some(text) if !text.is_empty() => text.chars().take(MAX_MESSAGE_CHARS).collect(),
+        _ if to == Abandoned::Canceled => "결제를 취소했습니다.".into(),
+        _ => "결제가 승인되지 않았어요.".into(),
+    };
+    match store::abandon_by_donor(&state.pool, &order_id, user.id, to, &code, &message).await {
+        Ok(Some(order)) => Json(confirm_result(order)).into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => server_error("결제 실패 기록", e),
     }
 }
 

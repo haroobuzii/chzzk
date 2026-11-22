@@ -252,6 +252,11 @@ async fn open_payment_window(order: &CreatedOrder) -> Result<(), String> {
     let mut script = document::eval(PAYMENT_SCRIPT);
     script.send(order).map_err(|_| UNKNOWN_ERROR.to_string())?;
     let reply: PaymentReply = script.recv().await.map_err(|_| UNKNOWN_ERROR.to_string())?;
+    if let Some(code) = &reply.code {
+        // 결제창이 결제 없이 끝났다. 주문서를 바로 취소·실패로 바꾼다(실패해도 30분 뒤 만료된다).
+        let body = json!({ "order_id": order.order_id, "code": code, "message": reply.message });
+        let _ = call_api("POST", "/api/donations/fail", Some(body)).await;
+    }
     match reply.code.as_deref() {
         None => Ok(()),
         Some("USER_CANCEL") | Some("PAY_PROCESS_CANCELED") => Err("결제를 취소했습니다.".into()),

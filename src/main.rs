@@ -36,7 +36,7 @@ mod viewer;
 
 use comments::CommentSection;
 use display::Mark;
-use donations::{DonationPanel, DonationSuccess};
+use donations::{DonationFail, DonationPanel, DonationSuccess};
 use login::{HeaderLogin, Login, RequireLogin, Signup};
 use manage::OwnerActions;
 use publisher::NewLive;
@@ -161,6 +161,9 @@ mod route {
         /// 결제 뒤 토스가 돌려보내는 결과 화면. 쿼리(`paymentKey`·`orderId`·`amount`)는 통째로 받아 직접 읽는다.
         #[route("/donations/success?:..query")]
         DonationSuccess { query: String },
+        /// 결제가 실패하거나 취소되면 토스가 돌려보내는 화면. 쿼리는 `code`·`message`·`orderId`(취소면 없을 수 있다).
+        #[route("/donations/fail?:..query")]
+        DonationFail { query: String },
         #[route("/:..rest")]
         PageNotFound { rest: Vec<String> },
     }

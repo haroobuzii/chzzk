@@ -67,6 +67,96 @@ pub fn DonationSuccess(query: String) -> Element {
     }
 }
 
+/// `/donations/fail`: 결제창이 `?code&message&orderId`로 돌려보낸 실패·취소 결과 화면.
+///
+/// 실패 보고 API(`POST /api/donations/fail`)로 내 주문서를 실패·취소로 바꾸고 안내를 보여 준다.
+/// 서버가 주문서 상태를 알려 주면(본인 주문서) 그 상태를, 아니면 주소의 코드를 따른다.
+#[component]
+pub fn DonationFail(query: String) -> Element {
+    let mut reported = use_signal(|| None::<Option<ConfirmResult>>);
+
+    use_effect(use_reactive!(|query| {
+        reported.set(None);
+        spawn(async move {
+            reported.set(Some(report_failure(&query).await));
+        });
+    }));
+
+    let code = query_value(&query, "code");
+    let message = query_value(&query, "message");
+    rsx! {
+        section { class: "donation-result",
+            p { class: "test-payment", "{TEST_PAYMENT_NOTICE}" }
+            match reported() {
+                None => rsx! {
+                    p { "결제 결과를 정리하는 중…" }
+                },
+                Some(result) => {
+                    let notice = fail_notice(code.as_deref(), message.as_deref(), result.as_ref());
+                    rsx! {
+                        h1 { "{notice.title}" }
+                        if let Some(detail) = notice.detail {
+                            p { class: "error", "{detail}" }
+                        }
+                        BackLink { broadcast_id: result.and_then(|r| r.broadcast_id) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 실패 보고 API를 부른다. 본인 주문서면 그 주문서의 상태를, 아니면(주문 번호 없음·남의 주문서·
+/// 비로그인·서버 오류) `None`을 돌려준다. 안내는 어느 쪽이든 보여 준다.
+async fn report_failure(query: &str) -> Option<ConfirmResult> {
+    let body = json!({
+        "order_id": query_value(query, "orderId"),
+        "code": query_value(query, "code").unwrap_or_else(|| "UNKNOWN".into()),
+        "message": query_value(query, "message"),
+    });
+    match call_api("POST", "/api/donations/fail", Some(body)).await {
+        Ok((200, body)) => serde_json::from_value(body).ok(),
+        _ => None,
+    }
+}
+
+/// 토스가 "구매자가 취소했다"고 알리는 코드.
+const CANCEL_CODES: [&str; 2] = ["PAY_PROCESS_CANCELED", "USER_CANCEL"];
+
+/// 실패 화면의 안내 문구.
+#[derive(Debug, PartialEq)]
+struct FailNotice {
+    title: &'static str,
+    detail: Option<String>,
+}
+
+/// 실패 화면에 보여 줄 안내. 서버가 알려 준 주문서 상태(`result`)가 있으면 그것을, 없으면 주소의 코드를 따른다.
+fn fail_notice(
+    code: Option<&str>,
+    message: Option<&str>,
+    result: Option<&ConfirmResult>,
+) -> FailNotice {
+    const CANCELED: &str = "결제를 취소했습니다";
+    const FAILED: &str = "결제에 실패했어요";
+    const DEFAULT_REASON: &str = "결제가 승인되지 않았어요.";
+    let failed = |reason: Option<&str>| FailNotice {
+        title: FAILED,
+        detail: Some(reason.unwrap_or(DEFAULT_REASON).to_string()),
+    };
+    let bare = |title| FailNotice {
+        title,
+        detail: None,
+    };
+    match result.map(|r| r.status.as_str()) {
+        Some("canceled") => bare(CANCELED),
+        Some("expired") => bare("시간이 지나 결제가 취소되었어요"),
+        Some("confirmed") => bare("이미 후원이 완료되었어요"),
+        Some(_) => failed(result.and_then(|r| r.message.as_deref())),
+        None if code.is_some_and(|c| CANCEL_CODES.contains(&c)) => bare(CANCELED),
+        None => failed(message),
+    }
+}
+
 /// 방송으로 돌아가는 링크. 방송이 지워졌으면 목록으로 간다.
 #[component]
 fn BackLink(broadcast_id: Option<i64>) -> Element {
@@ -166,5 +256,51 @@ mod tests {
         assert_eq!(query_value(query, "code"), None);
         assert_eq!(query_value("orderId=", "orderId"), None);
         assert_eq!(query_value("a=%zz%4", "a").as_deref(), Some("%zz%4"));
+    }
+
+    fn result(status: &str, message: Option<&str>) -> ConfirmResult {
+        ConfirmResult {
+            status: status.into(),
+            broadcast_id: Some(1),
+            amount: 5000,
+            code: Some("X".into()),
+            message: message.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn 취소_코드면_취소_안내다() {
+        for code in ["PAY_PROCESS_CANCELED", "USER_CANCEL"] {
+            let notice = fail_notice(Some(code), Some("사용자가 취소"), None);
+            assert_eq!(notice.title, "결제를 취소했습니다");
+            assert_eq!(notice.detail, None);
+        }
+    }
+
+    #[test]
+    fn 다른_코드면_실패_이유를_보여_준다() {
+        let notice = fail_notice(Some("REJECT_CARD_COMPANY"), Some("카드사 거절"), None);
+        assert_eq!(notice.title, "결제에 실패했어요");
+        assert_eq!(notice.detail.as_deref(), Some("카드사 거절"));
+        let bare = fail_notice(None, None, None);
+        assert_eq!(bare.title, "결제에 실패했어요");
+        assert_eq!(bare.detail.as_deref(), Some("결제가 승인되지 않았어요."));
+    }
+
+    #[test]
+    fn 서버가_알려_준_상태를_주소보다_믿는다() {
+        let expired = result("expired", Some("시간이 지나 결제가 취소되었어요."));
+        let notice = fail_notice(Some("PAY_PROCESS_CANCELED"), None, Some(&expired));
+        assert_eq!(notice.title, "시간이 지나 결제가 취소되었어요");
+        assert_eq!(notice.detail, None);
+
+        let failed = result("failed", Some("거절"));
+        let notice = fail_notice(Some("USER_CANCEL"), None, Some(&failed));
+        assert_eq!(notice.title, "결제에 실패했어요");
+        assert_eq!(notice.detail.as_deref(), Some("거절"));
+
+        let confirmed = result("confirmed", None);
+        let notice = fail_notice(Some("USER_CANCEL"), None, Some(&confirmed));
+        assert_eq!(notice.title, "이미 후원이 완료되었어요");
     }
 }

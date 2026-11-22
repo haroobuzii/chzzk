@@ -190,6 +190,89 @@ pub async fn mark_failed(
     Ok(result.rows_affected() == 1)
 }
 
+/// 만료 코드. 만료된 주문서의 실패 코드로 남는다.
+pub const EXPIRED_CODE: &str = "expired";
+/// 만료 안내. 결과 화면이 그대로 보여 준다.
+pub const EXPIRED_MESSAGE: &str = "시간이 지나 결제가 취소되었어요.";
+
+/// `cutoff`보다 먼저 만든 결제 대기 주문서를 모두 만료로 바꾸고, 바꾼 개수를 돌려준다.
+pub async fn expire_older_than(pool: &PgPool, cutoff: DateTime<Utc>) -> sqlx::Result<u64> {
+    let result = sqlx::query(
+        "UPDATE donation_orders SET status = 'expired', failure_code = $2, failure_message = $3
+         WHERE status = 'pending' AND created_at < $1",
+    )
+    .bind(cutoff)
+    .bind(EXPIRED_CODE)
+    .bind(EXPIRED_MESSAGE)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// 주문서 하나가 결제 대기이고 `cutoff`보다 먼저 만들어졌으면 만료로 바꾼다. 바꿨으면 `true`.
+pub async fn expire_if_older_than(
+    pool: &PgPool,
+    order_id: &str,
+    cutoff: DateTime<Utc>,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE donation_orders SET status = 'expired', failure_code = $3, failure_message = $4
+         WHERE order_id = $1 AND status = 'pending' AND created_at < $2",
+    )
+    .bind(order_id)
+    .bind(cutoff)
+    .bind(EXPIRED_CODE)
+    .bind(EXPIRED_MESSAGE)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// 결제창에서 실패·취소로 돌아왔을 때 바꿀 상태.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Abandoned {
+    Failed,
+    Canceled,
+}
+
+/// `donor_id`의 결제 대기 주문서일 때만 실패나 취소로 바꾸고 코드와 메시지를 남긴다.
+/// 끝난 뒤의 주문서를 돌려준다. 그런 번호가 없거나 남의 주문서면 아무것도 바꾸지 않고 `None`이다.
+pub async fn abandon_by_donor(
+    pool: &PgPool,
+    order_id: &str,
+    donor_id: i64,
+    to: Abandoned,
+    code: &str,
+    message: &str,
+) -> sqlx::Result<Option<Order>> {
+    let status = match to {
+        Abandoned::Failed => OrderStatus::Failed,
+        Abandoned::Canceled => OrderStatus::Canceled,
+    };
+    let owned: Option<i64> = sqlx::query_scalar(
+        "SELECT donor_id FROM donation_orders WHERE order_id = $1 AND donor_id = $2",
+    )
+    .bind(order_id)
+    .bind(donor_id)
+    .fetch_optional(pool)
+    .await?;
+    if owned.is_none() {
+        return Ok(None);
+    }
+    sqlx::query(
+        "UPDATE donation_orders SET status = $3, failure_code = $4, failure_message = $5
+         WHERE order_id = $1 AND donor_id = $2 AND status = 'pending'",
+    )
+    .bind(order_id)
+    .bind(donor_id)
+    .bind(status.as_str())
+    .bind(code)
+    .bind(message)
+    .execute(pool)
+    .await?;
+    find_by_order_id(pool, order_id).await
+}
+
 /// 방송의 확정된 후원을 최신순으로 읽는다. 같은 시각이면 나중에 만든 주문서가 앞이다.
 pub async fn confirmed_for_broadcast(
     pool: &PgPool,

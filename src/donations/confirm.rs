@@ -3,8 +3,10 @@
 //! 돌아온 결과 화면([`confirm`])과 승인 통지(04)가 함께 쓴다. 통지는 결제 회사에 조회한 결과를
 //! 주문서와 함께 [`settle`]로 넘긴다. 결제 회사의 응답 모양은 모르고 [`Approval`]만 다룬다.
 
+use chrono::Utc;
 use sqlx::PgPool;
 
+use super::expiry;
 use super::store::{self, Order, OrderStatus};
 use super::toss::{Approval, TossConfig};
 
@@ -39,8 +41,9 @@ pub const PAYMENT_MISMATCH: &str = "payment_mismatch";
 /// 돌아온 결과 화면의 승인 확인. 끝난 뒤의 주문서를 돌려준다.
 ///
 /// 1. 주문서가 결제 대기가 아니면(이미 확정·실패 등) 그대로 돌려준다. 같은 요청을 다시 보내도 같은 결과다.
-/// 2. 돌아온 금액이 주문서와 다르면 결제 회사를 부르지 않고 실패(`amount_mismatch`)로 바꾼다.
-/// 3. 결제 회사에 주문서 금액으로 승인을 요청하고, 그 결과를 [`settle`]로 반영한다.
+/// 2. 결제 대기로 30분이 지났으면 결제 회사를 부르지 않고 만료로 바꾼다.
+/// 3. 돌아온 금액이 주문서와 다르면 결제 회사를 부르지 않고 실패(`amount_mismatch`)로 바꾼다.
+/// 4. 결제 회사에 주문서 금액으로 승인을 요청하고, 그 결과를 [`settle`]로 반영한다.
 pub async fn confirm(
     pool: &PgPool,
     toss: &TossConfig,
@@ -51,6 +54,9 @@ pub async fn confirm(
         .ok_or(ConfirmError::NotFound)?;
     if order.status != OrderStatus::Pending {
         return Ok(order);
+    }
+    if store::expire_if_older_than(pool, &order.order_id, expiry::cutoff(Utc::now())).await? {
+        return reload(pool, &order.order_id).await;
     }
     if returned.amount != order.amount {
         store::mark_failed(

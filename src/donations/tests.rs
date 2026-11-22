@@ -31,7 +31,7 @@ fn fake_toss() -> TossConfig {
 }
 
 /// 실제 서버처럼 `Origin` 확인을 씌운 후원 라우터. 토스 키가 있다.
-fn router(pool: &PgPool) -> Router {
+pub(super) fn router(pool: &PgPool) -> Router {
     router_with(pool, Some(fake_toss()))
 }
 
