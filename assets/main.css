@@ -702,3 +702,73 @@ h1 {
     background: #16171b;
     color: #e8e8ea;
 }
+
+/* 머리글의 "앱 다운로드". 버튼보다 눈에 덜 띄는 글자 링크다. */
+.header-link {
+    flex-shrink: 0;
+    color: #c4c6cc;
+    font-size: 14px;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.header-link:hover {
+    color: #e8e8ea;
+    text-decoration: underline;
+}
+
+/* 다운로드 페이지(/download): OS마다 한 칸씩 쌓는다. */
+.download-page {
+    max-width: 720px;
+}
+
+.download-intro {
+    color: #c4c6cc;
+    line-height: 1.6;
+}
+
+.download-os {
+    margin-top: 20px;
+    padding: 20px;
+    background: #17181c;
+    border: 1px solid #26282e;
+    border-radius: 12px;
+}
+
+.download-os h2 {
+    margin: 0 0 6px;
+    font-size: 18px;
+}
+
+.download-arch {
+    margin: 0 0 14px;
+    color: #a0a3ab;
+    font-size: 14px;
+}
+
+.download-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* 긴 버튼 이름이 휴대폰 폭을 넘지 않게 줄바꿈을 허용한다. */
+.download-os .button {
+    white-space: normal;
+}
+
+.download-steps {
+    margin: 16px 0 0;
+    padding-left: 20px;
+    color: #c4c6cc;
+    font-size: 14px;
+    line-height: 1.7;
+}
+
+.download-pending {
+    display: inline-block;
+    padding: 8px 14px;
+    border-radius: 8px;
+    background: #26282e;
+    color: #a0a3ab;
+}

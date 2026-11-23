@@ -22,6 +22,8 @@ mod db;
 mod display;
 mod donations;
 #[cfg(feature = "server")]
+mod download;
+#[cfg(feature = "server")]
 mod health;
 #[cfg(feature = "server")]
 mod live;
@@ -202,6 +204,8 @@ fn Shell() -> Element {
             nav { class: "header-actions",
                 Link { class: "button live-button", to: Route::NewLive {}, "라이브 시작" }
                 Link { class: "button", to: Route::NewBroadcast {}, "녹화 올리기" }
+                // 다운로드 페이지는 서버가 그리는 페이지라 Dioxus 화면 이동(Link)이 아니라 보통 링크로 간다.
+                a { class: "header-link", href: "/download", "앱 다운로드" }
                 HeaderLogin {}
             }
         }

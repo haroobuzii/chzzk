@@ -61,8 +61,11 @@ pub async fn router() -> anyhow::Result<Router> {
         mediamtx: MEDIAMTX.get().expect("위에서 정했다").clone(),
         version: crate::health::BUILD_VERSION,
     };
+    let download = crate::download::DownloadState {
+        testflight_url: config().testflight_url.clone(),
+    };
     // Dioxus가 만든 화면·서버 함수 라우터에 로그인 API, 등록 API, 라이브 API, 댓글 API, 방송 관리 API,
-    // 후원 API, 상태 확인 라우트를 덧붙인다.
+    // 후원 API, 상태 확인 라우트, 다운로드 페이지를 덧붙인다.
     // 다른 출처에서 온 상태 변경 요청은 어느 라우트든 막는다.
     Ok(crate::auth::guard_origin(
         dioxus::server::router(crate::App)
@@ -72,7 +75,8 @@ pub async fn router() -> anyhow::Result<Router> {
             .merge(crate::comments::api(pool().clone()))
             .merge(crate::manage::api(manage))
             .merge(crate::donations::api(donations))
-            .merge(crate::health::api(health)),
+            .merge(crate::health::api(health))
+            .merge(crate::download::api(download)),
     ))
 }
 

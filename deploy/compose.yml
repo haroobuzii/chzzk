@@ -40,6 +40,8 @@ services:
       # 둘 다 비어 있으면 후원 기능만 끈 채로 켜진다(.env.example 참고).
       TOSS_CLIENT_KEY: ${TOSS_CLIENT_KEY:-}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:-}
+      # 다운로드 페이지의 iOS TestFlight 공개 링크. 비어 있으면 "준비 중"으로 나온다.
+      TESTFLIGHT_URL: ${TESTFLIGHT_URL:-}
     volumes:
       # 녹화 영상 보관 폴더.
       - videos:/data

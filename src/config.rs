@@ -25,11 +25,14 @@ pub struct Config {
     pub live_path_prefix: String,
     /// 토스 테스트 키와 API 설정. 키가 둘 다 없으면 `None`이고 후원 기능이 꺼진다.
     pub toss: Option<TossConfig>,
+    /// iOS 앱 TestFlight 공개 링크. 없으면 다운로드 페이지에 "준비 중"으로 나온다.
+    pub testflight_url: Option<String>,
 }
 
 impl Config {
     /// `DATABASE_URL`, `DATA_DIR`, `MAX_UPLOAD_BYTES`, `MEDIAMTX_WEBRTC_URL`, `MEDIAMTX_API_URL`,
-    /// `LIVE_PATH_PREFIX`, `TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`, `TOSS_API_URL`, `TOSS_TEST_FAIL_CODE`를 읽는다.
+    /// `LIVE_PATH_PREFIX`, `TOSS_CLIENT_KEY`, `TOSS_SECRET_KEY`, `TOSS_API_URL`, `TOSS_TEST_FAIL_CODE`,
+    /// `TESTFLIGHT_URL`을 읽는다.
     /// 비어 있거나 없는 값은 기본값을 쓴다(`DATABASE_URL` 제외).
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = read("DATABASE_URL").context("DATABASE_URL 환경 변수가 필요합니다")?;
@@ -64,6 +67,7 @@ impl Config {
                 .unwrap_or_else(|| "http://localhost:9997".into()),
             live_path_prefix,
             toss,
+            testflight_url: read("TESTFLIGHT_URL"),
         })
     }
 }
