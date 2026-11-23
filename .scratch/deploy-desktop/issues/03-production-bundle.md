@@ -14,9 +14,9 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] ARM64 이미지가 빌드된다(맥에서 `docker buildx`).
-- [ ] `docker compose config`가 운영용 파일에서 오류 없이 통과한다.
-- [ ] 로컬에서 운영용 묶음을 띄우면 `/healthz`가 200이고, 녹화 등록·재생이 된다.
-- [ ] 저장소에 실제 비밀 값이 없다(`scripts/check-secrets.sh` 통과).
+- [x] ARM64 이미지가 빌드된다(맥에서 `docker buildx`).
+- [x] `docker compose config`가 운영용 파일에서 오류 없이 통과한다.
+- [x] 로컬에서 운영용 묶음을 띄우면 `/healthz`가 200이고, 녹화 등록·재생이 된다.
+- [x] 저장소에 실제 비밀 값이 없다(`scripts/check-secrets.sh` 통과).
