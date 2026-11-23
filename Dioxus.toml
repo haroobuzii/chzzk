@@ -15,3 +15,10 @@ script = []
 [bundle]
 identifier = "com.haroobuzii.chzzk"
 publisher = "haroobuzii"
+
+# 맥 앱(.app·.dmg)에 보이는 이름. 실행 파일 이름(chzzk)과 번들 ID는 ASCII 그대로 둔다.
+# signing_identity "-"는 서명 인증서가 없을 때 ad-hoc 서명을 한다(arm64 앱은 서명이 있어야 열린다).
+# CI에서 APPLE_CERTIFICATE가 있으면 dx가 그 Developer ID 인증서로 대신 서명한다(docs/desktop-release.md).
+[bundle.macos]
+bundle_name = "녹화방송"
+signing_identity = "-"

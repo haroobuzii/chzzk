@@ -232,6 +232,7 @@ Status: ready-for-agent
   - ADR 0009: 앱은 보기 전용 + 웹에서 열기
   - ADR 0010: Apple 개발자·TestFlight·맥 서명
   - 조사 메모: `docs/deploy-notes.md`
+  - 데스크톱 앱 배포·맥 서명 Secrets 이름: `docs/desktop-release.md`(티켓 08)
 - 사용자가 직접 해야 하는 일
   - Apple 개발자 승인 확인
   - App Store Connect에서 앱 등록·외부 테스트 링크 만들기(안내함)

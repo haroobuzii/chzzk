@@ -8,4 +8,7 @@
 
 # 영상 보관 폴더
 /data
+
+# 데스크톱 앱 설치 파일(scripts/bundle-app.sh 결과)
+/dist
 .claude/worktrees/
