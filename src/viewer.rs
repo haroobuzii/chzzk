@@ -6,13 +6,14 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 
+use crate::broadcast_view::{BroadcastInfo, LiveEndedNotice};
 use crate::comments::CommentSection;
-use crate::display::{broadcast_duration, Mark};
+use crate::display::Mark;
 use crate::donations::DonationPanel;
 use crate::login::call_api;
 use crate::manage::OwnerActions;
 use crate::refresh::{sleep_ms, REFRESH_MS};
-use crate::{format_kst, get_broadcast, Broadcast, NotFound, Route};
+use crate::{get_broadcast, Broadcast, NotFound, Route};
 
 /// 라이브 방송 상세: 방송 중이면 시청 화면, 종료면 종료 안내.
 /// 소유자에게는 방송 중일 때 "방송 종료" 버튼이 보인다.
@@ -50,7 +51,6 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
         return rsx! { NotFound {} };
     }
     let broadcast = current();
-    let shown_time = broadcast.shown_time();
     // 종료가 끝나면 바로 다시 불러와 종료 안내로 바꾼다(5초 확인을 기다리지 않는다).
     let refresh = move |_| {
         let id = current.peek().id;
@@ -66,22 +66,9 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
                 // 방송이 끝나 이 부분이 사라지면 LivePlayer가 연결을 닫는다.
                 LivePlayer { id: broadcast.id }
             } else {
-                div { class: "live-ended", role: "status",
-                    p { class: "live-ended-title", "방송이 종료되었습니다" }
-                    p { "종료된 라이브 방송은 다시 볼 수 없습니다." }
-                }
+                LiveEndedNotice {}
             }
-            h1 { class: "detail-title",
-                if broadcast.mark() == Mark::Live {
-                    span { class: "inline-badge {Mark::Live.class()}", "{Mark::Live.label()}" }
-                }
-                "{broadcast.title}"
-            }
-            p { class: "detail-owner", "{broadcast.owner_label()}" }
-            p { class: "card-time", "시작 {format_kst(&shown_time)}" }
-            if let Some(ended_at) = broadcast.ended_at {
-                p { class: "card-time", "방송한 시간 {broadcast_duration(shown_time, ended_at)}" }
-            }
+            BroadcastInfo { broadcast: broadcast.clone() }
             OwnerActions {
                 broadcast: broadcast.clone(),
                 on_renamed: move |title| current.write().title = title,

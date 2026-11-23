@@ -6,3 +6,8 @@
 pub mod deploy_server;
 #[cfg(test)]
 mod deploy_server_tests;
+#[cfg(feature = "app")]
+mod screens;
+
+#[cfg(feature = "app")]
+pub use screens::launch;
