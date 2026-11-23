@@ -18,7 +18,7 @@ allow='_fake|여기에|생략'
 hits=$(git grep -nIE "$pattern" -- . ':!*.lock' 2>/dev/null | grep -vE "$allow" | cut -d: -f1-2 || true)
 if [ -n "$hits" ]; then
   echo "키 모양이 작업 폴더의 추적 파일에 있다:" >&2
-  echo "$hits" | sed 's/^/  /' >&2
+  printf '%s\n' "$hits" | sed 's/^/  /' >&2
   found=1
 fi
 for commit in $(git rev-list --all); do
@@ -27,7 +27,7 @@ for commit in $(git rev-list --all); do
   done || true)
   if [ -n "$in_commit" ]; then
     echo "키 모양이 커밋 기록에 있다:" >&2
-    echo "$in_commit" | sed 's/^/  /' >&2
+    printf '%s\n' "$in_commit" | sed 's/^/  /' >&2
     found=1
   fi
 done
@@ -46,6 +46,8 @@ if [ "${1:-}" != "--patterns-only" ]; then
       value="${value#"${value%%[![:space:]]*}"}"
       value="${value%"${value##*[![:space:]]}"}"
       [ ${#value} -lt 12 ] && continue
+      # 커밋 해시 목록을 일부러 낱개 인자로 나눠 넘긴다(해시에는 공백이 없다).
+      # shellcheck disable=SC2046
       if git grep -qF -e "$value" $(git rev-list --all) -- . 2>/dev/null \
         || grep -rqF --exclude-dir=target --exclude-dir=.git --exclude-dir=.claude --exclude=.env -e "$value" . 2>/dev/null; then
         echo "$name의 실제 값이 저장소, 커밋 기록 또는 작업 폴더의 다른 파일에 있다." >&2

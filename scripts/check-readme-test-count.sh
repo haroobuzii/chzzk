@@ -13,6 +13,8 @@ readme="${2:-README.md}"
 
 # "test result: ok. 148 passed; ..." 줄들의 통과 개수를 모두 더한다(테스트 묶음이 여럿일 수 있다).
 actual=$(grep -Eo 'test result: [a-zA-Z]+\. [0-9]+ passed' "$output" | grep -Eo '[0-9]+ passed' | grep -Eo '[0-9]+' | awk '{s+=$1} END {print s+0}')
+# README에 적힌 글자 그대로의 백틱을 찾는다(셸 확장이 아니다).
+# shellcheck disable=SC2016
 written=$(grep -Eo '`cargo test`: [0-9]+개' "$readme" | head -1 | grep -Eo '[0-9]+' || true)
 
 if [ -z "$written" ]; then

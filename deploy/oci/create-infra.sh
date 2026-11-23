@@ -65,6 +65,8 @@ fi
 
 INSTANCE=$(q compute instance list -c "$C" --display-name "$NAME" --lifecycle-state RUNNING --query 'data[0].id' --raw-output || true)
 if [ -z "$INSTANCE" ] || [ "$INSTANCE" = "null" ]; then
+  # 백틱은 OCI --query(JMESPath)의 문자열 표기라 셸이 펼치면 안 된다.
+  # shellcheck disable=SC2016
   IMAGE=$(q compute image list -c "$C" --operating-system "Canonical Ubuntu" --operating-system-version "24.04" --shape "$SHAPE" --sort-by TIMECREATED --sort-order DESC --query 'data[?!contains("display-name", `Minimal`)] | [0].id' --raw-output)
   echo "VM 만드는 중($SHAPE ${OCPUS} OCPU·${MEMORY_GB} GB)… 재고가 없으면 'Out of host capacity' 오류가 난다."
   INSTANCE=$(oci compute instance launch -c "$C" --availability-domain "$AD" --display-name "$NAME" \
