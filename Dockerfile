@@ -19,7 +19,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 # 3) 의존성을 먼저 빌드하고, 그다음 dx로 화면(WASM)과 서버를 함께 묶는다.
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --no-default-features --features server --recipe-path recipe.json
+# dx와 같은 프로필·대상·RUSTFLAGS로 빌드해야 dx bundle이 이 결과를 그대로 쓴다(Cargo.toml의 프로필 설명).
+# WASM 쪽 RUSTFLAGS는 dx 0.7.10이 웹 빌드에 붙이는 값과 같다. dx를 올리면 다시 확인한다.
+RUN cargo chef cook --profile server-release --target "$(rustc -vV | sed -n 's/^host: //p')" \
+        --no-default-features --features server --recipe-path recipe.json \
+    && RUSTFLAGS='--cfg getrandom_backend="wasm_js"' \
+        cargo chef cook --profile wasm-release --target wasm32-unknown-unknown --recipe-path recipe.json
 RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
     && cargo binstall dioxus-cli@0.7.10 --root /.cargo -y --force
 ENV PATH="/.cargo/bin:$PATH"
