@@ -11,11 +11,15 @@ use axum::{
     Router,
 };
 
-use super::forbidden;
+use super::{app_cors, forbidden};
 
-/// 라우터 전체에 `Origin` 확인을 씌운다. 서버는 모든 라우트를 합친 뒤 한 번 부른다.
+/// 라우터 전체에 `Origin` 확인과 앱용 접근 허용(CORS)을 씌운다. 서버는 모든 라우트를 합친 뒤 한 번 부른다.
+///
+/// 앱용 접근 허용이 바깥에 있어, 앱의 사전 요청(OPTIONS)에는 라우트에 닿기 전에 답한다.
 pub fn guard_origin(router: Router) -> Router {
-    router.layer(middleware::from_fn(check_origin))
+    router
+        .layer(middleware::from_fn(check_origin))
+        .layer(middleware::from_fn(app_cors::allow_app))
 }
 
 async fn check_origin(request: Request, next: Next) -> Response {
@@ -23,7 +27,8 @@ async fn check_origin(request: Request, next: Next) -> Response {
         *request.method(),
         Method::POST | Method::PATCH | Method::DELETE | Method::PUT
     );
-    if changes_state && !origin_allowed(request.headers()) {
+    // 앱 출처의 시청 연결(WHEP)만 다른 출처라도 받는다. 쿠키를 허용하지 않으므로 로그인한 사용자로 무엇을 바꿀 수는 없다.
+    if changes_state && !origin_allowed(request.headers()) && !app_cors::allows(&request) {
         return forbidden();
     }
     next.run(request).await

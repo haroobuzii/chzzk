@@ -2,6 +2,7 @@
 //!
 //! 로그인 상태는 DB의 세션과 `HttpOnly` 쿠키로 유지한다. 쿠키에는 세션 값 원문이, DB에는 그 해시가 있다.
 
+mod app_cors;
 mod current_user;
 mod origin;
 pub mod rules;
@@ -9,6 +10,8 @@ mod store;
 
 #[cfg(test)]
 pub mod personas;
+#[cfg(test)]
+mod app_cors_tests;
 #[cfg(test)]
 mod tests;
 
