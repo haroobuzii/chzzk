@@ -6,6 +6,8 @@ use chrono::{DateTime, FixedOffset, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(feature = "app", all(test, feature = "server")))]
+mod app;
 #[cfg(feature = "server")]
 mod auth;
 mod comments;
@@ -52,8 +54,12 @@ fn main() {
     #[cfg(feature = "server")]
     dioxus::serve(|| async move { server::router().await });
 
+    // 데스크톱 앱으로 빌드할 때: 배포 서버의 공개 API를 부르는 보기 전용 앱을 띄운다(ADR 0009).
+    #[cfg(feature = "app")]
+    dioxus::launch(app::App);
+
     // 브라우저(WASM)로 빌드할 때: 화면만 띄운다.
-    #[cfg(not(feature = "server"))]
+    #[cfg(not(any(feature = "server", feature = "app")))]
     dioxus::launch(App);
 }
 
