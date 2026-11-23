@@ -5,6 +5,8 @@
 
 # 비밀 값이 들어 있는 환경 변수 파일
 .env
+.env.*
+!.env.example
 
 # 영상 보관 폴더
 /data

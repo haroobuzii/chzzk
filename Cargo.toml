@@ -40,3 +40,15 @@ opt-level = 3
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# dx bundle --release가 쓰는 프로필. dx는 없으면 스스로 만들지만, Dockerfile의 cargo chef cook이
+# 같은 프로필로 의존성을 미리 빌드하려면 여기 있어야 한다. 값은 dx 0.7.10이 스스로 만드는 프로필과 같게 맞췄다
+# (strip 끔, WASM은 크기 우선 opt-level "s"). 하나라도 다르면 dx가 의존성을 처음부터 다시 빌드한다.
+[profile.server-release]
+inherits = "release"
+strip = false
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+strip = false

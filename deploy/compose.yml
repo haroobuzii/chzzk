@@ -1,0 +1,172 @@
+# 배포 서버(OCI A1)용 Docker Compose(ADR 0008). 로컬 개발용 ../docker-compose.yml과 따로 둔다.
+# 이 파일 하나와 같은 폴더의 .env(.env.example 참고)만 서버의 /srv/chzzk에 두면 된다.
+# Caddy 설정과 MediaMTX 설정도 아래 configs에 적어 두어서 다른 파일이 필요 없다.
+#
+#   docker compose pull && docker compose up -d
+#
+# 이 맥에서 통째로 띄워 보는 방법은 .env.example의 "로컬 확인"을 본다.
+name: chzzk-prod
+
+services:
+  # HTTPS 입구. DOMAIN의 인증서를 Let's Encrypt에서 자동으로 받고, HTTP는 HTTPS로 옮긴다.
+  # DOMAIN이 localhost면 Caddy가 스스로 만든 내부 인증서를 쓴다(로컬 확인용).
+  caddy:
+    image: caddy:2.11
+    restart: unless-stopped
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    volumes:
+      # 인증서와 계정 정보. 지워지면 다시 발급받아야 하므로 볼륨에 둔다.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
+  # 앱(웹 화면 + 서버). GitHub Actions가 만든 ARM64 이미지를 GHCR에서 받는다. 밖에는 열지 않는다.
+  app:
+    image: ghcr.io/haroobuzii/chzzk:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://chzzk:${DB_PASSWORD:?.env에 DB_PASSWORD를 적어 주세요}@db:5432/chzzk
+      DATA_DIR: /data
+      MEDIAMTX_WEBRTC_URL: http://mediamtx:8889
+      MEDIAMTX_API_URL: http://mediamtx:9997
+      LIVE_PATH_PREFIX: ${LIVE_PATH_PREFIX:-live}
+      # 둘 다 비어 있으면 후원 기능만 끈 채로 켜진다(.env.example 참고).
+      TOSS_CLIENT_KEY: ${TOSS_CLIENT_KEY:-}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:-}
+    volumes:
+      # 녹화 영상 보관 폴더.
+      - videos:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chzzk
+      # 볼륨이 비어 있을 때(처음 한 번)만 이 비밀번호로 만든다. 나중에 바꾸려면 DB 안에서 ALTER USER로 바꾼다.
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?.env에 DB_PASSWORD를 적어 주세요}
+      POSTGRES_DB: chzzk
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "chzzk", "-d", "chzzk"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 라이브 방송 영상 중계(ADR 0004). HTTP(WHIP/WHEP 8889, 관리 API 9997)는 밖에 열지 않고 앱 서버만 부른다.
+  # 영상(UDP)만 밖에 연다. 알리는 포트와 여는 포트가 같아야 하므로 둘 다 WEBRTC_UDP_PORT를 쓴다.
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.3
+    restart: unless-stopped
+    command: ["/mediamtx.yml"]
+    configs:
+      - source: mediamtx
+        target: /mediamtx.yml
+    environment:
+      # 휴대폰과 시청자가 영상을 보낼·받을 주소(추가 ICE 후보). VM 안에서는 공인 IP가 보이지 않는다.
+      MTX_WEBRTCADDITIONALHOSTS: ${PUBLIC_IP:?.env에 PUBLIC_IP(서버 공인 IP)를 적어 주세요}
+      MTX_WEBRTCLOCALUDPADDRESS: ":${WEBRTC_UDP_PORT:-8189}"
+    ports:
+      - "${WEBRTC_UDP_PORT:-8189}:${WEBRTC_UDP_PORT:-8189}/udp"
+
+volumes:
+  caddy-data:
+  caddy-config:
+  videos:
+  db-data:
+
+configs:
+  # Caddy 설정. ${...}는 docker compose가 .env 값으로 채운다.
+  caddyfile:
+    content: |
+      {
+      	# 컨테이너 안에서는 내부 인증서(localhost)를 운영체제에 설치할 수 없으므로 시도하지 않는다.
+      	skip_install_trust
+      	servers {
+      		timeouts {
+      			# 2 GiB 업로드가 휴대폰 망에서 잠깐 멈춰도 끊지 않는다(기본 1분).
+      			read_body_idle 10m
+      		}
+      	}
+      }
+
+      ${DOMAIN:-chzzk.haroobuzii.com} {
+      	# 앱의 업로드 한도(2 GiB)에 multipart 머리 몫 1 MiB를 더한 값. 앱(src/routes.rs)과 같다.
+      	request_body {
+      		max_size 2049MiB
+      	}
+      	# X-Forwarded-Proto: https를 붙여 넘기므로 앱이 세션 쿠키에 Secure를 붙인다.
+      	reverse_proxy app:8080
+      }
+
+  # MediaMTX 설정. ../docker-compose.yml의 개발용 설정과 같다. 한쪽을 바꾸면 다른 쪽도 바꾼다.
+  # 다른 점(추가 ICE 후보, UDP 포트)은 위 mediamtx 서비스의 환경 변수로 넣는다.
+  mediamtx:
+    content: |
+      # MediaMTX 설정(1.21.3). 라이브 방송의 영상만 중계한다(ADR 0004).
+      # 적지 않은 값은 MediaMTX 기본값을 쓴다.
+      #
+      # 켜는 것은 WebRTC(WHIP 송출·WHEP 시청)와 관리 API뿐이다.
+      # 두 HTTP 포트는 compose 네트워크 안에만 열고, 휴대폰과 시청자는 우리 서버를 거쳐서만 닿는다.
+      # 그래서 여기서는 따로 인증하지 않아도 송출 키 확인을 건너뛸 수 없다.
+
+      logLevel: info
+
+      # 관리 API: 상태 감시기가 "지금 영상이 들어오는 경로" 목록을 읽는다.
+      api: true
+      apiAddress: :9997
+
+      # 쓰지 않는 기능은 모두 끈다.
+      metrics: false
+      pprof: false
+      playback: false
+      rtsp: false
+      rtmp: false
+      hls: false
+      srt: false
+      moq: false
+
+      # WebRTC. HTTP(WHIP/WHEP)는 8889, 영상은 UDP 8189 하나로 주고받는다.
+      webrtc: true
+      webrtcAddress: :8889
+      # 휴대폰과의 HTTPS는 Caddy가 맡고, 영상 자체는 DTLS-SRTP로 암호화된다.
+      webrtcEncryption: false
+      webrtcLocalUDPAddress: :8189
+      webrtcLocalTCPAddress: ""
+      # 컨테이너 안의 IP(172.x)는 휴대폰이 쓸 수 없으므로 알리지 않는다.
+      # 대신 compose가 MTX_WEBRTCADDITIONALHOSTS로 서버 공인 IP(PUBLIC_IP)를 넘긴다.
+      webrtcIPsFromInterfaces: false
+      webrtcAdditionalHosts: []
+
+      # 누구나 송출·시청·관리 API를 쓸 수 있게 한다. HTTP 포트가 compose 네트워크 안에만 열려 있어 괜찮다.
+      authMethod: internal
+      authInternalUsers:
+        - user: any
+          pass:
+          ips: []
+          permissions:
+            - action: publish
+            - action: read
+            - action: api
+
+      # 라이브 방송 하나는 경로 live/<방송 번호> 하나다. 경로는 미리 정하지 않는다.
+      paths:
+        all_others:
