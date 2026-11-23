@@ -53,7 +53,8 @@ fn app_origin(headers: &HeaderMap) -> Option<HeaderValue> {
 /// 앱 출처에서 앱에 연 경로·방법으로 온 요청인지. `Origin` 확인은 이런 요청을 다른 출처로 보지 않는다.
 pub(super) fn allows(request: &Request) -> bool {
     app_origin(request.headers()).is_some()
-        && app_methods(request.uri().path()).is_some_and(|methods| methods.contains(request.method()))
+        && app_methods(request.uri().path())
+            .is_some_and(|methods| methods.contains(request.method()))
 }
 
 /// 앱 출처 요청에 허용 헤더를 붙이고, 사전 요청(OPTIONS)에는 바로 답한다.

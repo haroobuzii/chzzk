@@ -9,9 +9,9 @@ pub mod rules;
 mod store;
 
 #[cfg(test)]
-pub mod personas;
-#[cfg(test)]
 mod app_cors_tests;
+#[cfg(test)]
+pub mod personas;
 #[cfg(test)]
 mod tests;
 
