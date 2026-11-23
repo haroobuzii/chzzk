@@ -75,7 +75,7 @@ async fn mediamtx_ok(mediamtx: &MediaMtx) -> bool {
 mod tests {
     use axum::{
         body::{to_bytes, Body},
-        http::{Request, StatusCode},
+        http::{header, Request, StatusCode},
         response::Response,
     };
     use serde_json::Value;
@@ -109,5 +109,56 @@ mod tests {
         assert_eq!(body["status"], "ok");
         assert_eq!(body["db"], "ok");
         assert_eq!(body["mediamtx"], "ok");
+    }
+
+    #[sqlx::test]
+    async fn unreachable_mediamtx_still_reports_ok(pool: PgPool) {
+        let fake = FakeMediaMtx::start().await;
+        fake.set_unreachable(true);
+        let response = get_healthz(HealthState {
+            pool,
+            mediamtx: fake.client(),
+            version: "abc1234",
+        })
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["db"], "ok");
+        assert_eq!(body["mediamtx"], "unreachable");
+    }
+
+    #[sqlx::test]
+    async fn closed_database_reports_503(pool: PgPool) {
+        let fake = FakeMediaMtx::start().await;
+        pool.close().await;
+        let response = get_healthz(HealthState {
+            pool,
+            mediamtx: fake.client(),
+            version: "abc1234",
+        })
+        .await;
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_json(response).await;
+        assert_eq!(body["db"], "down");
+        assert_eq!(body["mediamtx"], "ok");
+    }
+
+    #[sqlx::test]
+    async fn reports_build_version_without_caching(pool: PgPool) {
+        let fake = FakeMediaMtx::start().await;
+        let response = get_healthz(HealthState {
+            pool,
+            mediamtx: fake.client(),
+            version: "3b29ea4",
+        })
+        .await;
+
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        assert_eq!(body_json(response).await["version"], "3b29ea4");
     }
 }

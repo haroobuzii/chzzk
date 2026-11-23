@@ -13,10 +13,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] DB 정상, 중계소 정상이면 200과 `db: "ok"`, `mediamtx: "ok"`다(가짜 MediaMTX).
-- [ ] 중계소에 닿지 않으면 200과 `mediamtx: "unreachable"`이다.
-- [ ] DB에 닿지 않으면 503과 `db: "down"`이다(닫힌 풀로 흉내).
-- [ ] 빌드 때 넣은 버전이 응답에 나온다.
-- [ ] 기존 테스트가 모두 통과하고 README 테스트 개수를 맞춘다.
+- [x] DB 정상, 중계소 정상이면 200과 `db: "ok"`, `mediamtx: "ok"`다(가짜 MediaMTX).
+- [x] 중계소에 닿지 않으면 200과 `mediamtx: "unreachable"`이다.
+- [x] DB에 닿지 않으면 503과 `db: "down"`이다(닫힌 풀로 흉내).
+- [x] 빌드 때 넣은 버전이 응답에 나온다.
+- [x] 기존 테스트가 모두 통과하고 README 테스트 개수를 맞춘다.
