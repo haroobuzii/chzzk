@@ -1,0 +1,8 @@
+# 이미지 빌드에 보내지 않는 것. 빌드 결과물, 비밀 값, 영상, 작업 메모는 이미지에 들어가지 않는다.
+target
+.git
+.claude
+.scratch
+.env
+**/.env
+data
