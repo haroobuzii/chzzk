@@ -6,45 +6,20 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 
-use crate::broadcast_view::{BroadcastInfo, LiveEndedNotice};
+use crate::broadcast_view::{use_live_status, BroadcastInfo, LiveEndedNotice};
 use crate::comments::CommentSection;
 use crate::display::Mark;
 use crate::donations::DonationPanel;
 use crate::login::call_api;
 use crate::manage::OwnerActions;
-use crate::refresh::{sleep_ms, REFRESH_MS};
 use crate::{get_broadcast, Broadcast, NotFound, Route};
 
 /// 라이브 방송 상세: 방송 중이면 시청 화면, 종료면 종료 안내.
 /// 소유자에게는 방송 중일 때 "방송 종료" 버튼이 보인다.
 #[component]
 pub fn LiveDetail(broadcast: Broadcast) -> Element {
-    let mut current = use_signal(|| broadcast.clone());
-    // 보고 있던 방송이 지워졌는지.
-    let mut deleted = use_signal(|| false);
-
-    // 5초마다 상태(제목 포함)를 확인한다. 종료되거나 지워지면 더 묻지 않는다.
-    use_effect(move || {
-        let id = current.peek().id;
-        spawn(async move {
-            while current.peek().mark() == Mark::Live {
-                sleep_ms(REFRESH_MS).await;
-                // 확인에 실패하면 지금 화면을 그대로 두고 다음에 다시 묻는다.
-                match get_broadcast(id).await {
-                    Ok(Some(latest)) => {
-                        if latest != *current.peek() {
-                            current.set(latest);
-                        }
-                    }
-                    Ok(None) => {
-                        deleted.set(true);
-                        break;
-                    }
-                    Err(_) => {}
-                }
-            }
-        });
-    });
+    // 5초마다 상태(제목 포함)를 확인한다. `deleted`는 보고 있던 방송이 지워졌는지.
+    let (mut current, deleted) = use_live_status(broadcast, get_broadcast);
 
     // 지워지면 LivePlayer가 사라지며 연결을 닫는다.
     if deleted() {
@@ -64,7 +39,7 @@ pub fn LiveDetail(broadcast: Broadcast) -> Element {
         article { class: "detail",
             if broadcast.mark() == Mark::Live {
                 // 방송이 끝나 이 부분이 사라지면 LivePlayer가 연결을 닫는다.
-                LivePlayer { id: broadcast.id }
+                LivePlayer { whep_url: format!("/api/live/{}/whep", broadcast.id) }
             } else {
                 LiveEndedNotice {}
             }
@@ -130,20 +105,38 @@ fn EndLiveButton(id: i64, on_ended: EventHandler<()>) -> Element {
 enum ViewerMessage {
     /// 연결했다(또는 소리를 켰다).
     Ok,
+    /// 브라우저(웹뷰)에 WebRTC(`RTCPeerConnection`)가 없다.
+    Unsupported,
     /// 실패했다. 사용자에게 보여 줄 한국어 문구가 담긴다.
     Error { message: String },
 }
 
-/// 실시간 영상. 화면에 들어오면 WHEP으로 연결하고, 화면에서 사라지면 연결을 닫는다.
+/// 시청 스크립트를 실행한 결과가 실패일 때.
+enum PlayerFailure {
+    /// WebRTC가 없어 시청할 수 없다.
+    Unsupported,
+    /// 그 밖의 실패. 사용자에게 보여 줄 문구.
+    Message(String),
+}
+
+/// 실시간 영상. 화면에 들어오면 `whep_url`로 WHEP 연결을 하고, 화면에서 사라지면 연결을 닫는다.
+///
+/// 웹은 같은 출처의 상대 주소를, 앱은 배포 서버의 절대 주소를 넘긴다(앱 출처의 CORS는 서버가 연다).
+/// WebRTC가 없을 때 `web_page`가 있으면(앱) 안내와 "웹에서 시청하기"를, 없으면(웹) 다른 브라우저 안내를 보여 준다.
 #[component]
-fn LivePlayer(id: i64) -> Element {
+pub fn LivePlayer(whep_url: String, web_page: Option<String>) -> Element {
     let mut error = use_signal(|| None::<String>);
+    let mut unsupported = use_signal(|| false);
     let mut muted = use_signal(|| true);
 
     use_effect(move || {
+        // 주소를 JavaScript 문자열로 넣는다(따옴표·역슬래시가 있어도 깨지지 않게).
+        let url = serde_json::to_string(&whep_url).expect("문자열은 JSON으로 바꿀 수 있다");
         spawn(async move {
-            if let Err(message) = run(&format!("await chzzkViewer.start({id});")).await {
-                error.set(Some(message));
+            match run(&format!("await chzzkViewer.start({url});")).await {
+                Ok(()) => {}
+                Err(PlayerFailure::Unsupported) => unsupported.set(true),
+                Err(PlayerFailure::Message(message)) => error.set(Some(message)),
             }
         });
     });
@@ -155,10 +148,29 @@ fn LivePlayer(id: i64) -> Element {
         spawn(async move {
             match run("await chzzkViewer.unmute();").await {
                 Ok(()) => muted.set(false),
-                Err(message) => error.set(Some(message)),
+                Err(PlayerFailure::Unsupported) => unsupported.set(true),
+                Err(PlayerFailure::Message(message)) => error.set(Some(message)),
             }
         });
     };
+
+    if unsupported() {
+        return match web_page {
+            Some(web_page) => rsx! {
+                div { class: "live-ended", role: "status",
+                    p { class: "live-ended-title", "이 앱에서는 실시간 시청을 할 수 없어요" }
+                    p { "라이브 방송은 웹에서 시청할 수 있어요." }
+                    // 앱 웹뷰는 바깥 주소로 가지 않고, 기본 브라우저에서 연다.
+                    a { class: "button live-button", href: "{web_page}", target: "_blank", "웹에서 시청하기" }
+                }
+            },
+            None => rsx! {
+                p { class: "error", role: "alert",
+                    "이 브라우저는 실시간 시청을 지원하지 않아요. 최신 Chrome이나 Safari로 열어 주세요."
+                }
+            },
+        };
+    }
 
     rsx! {
         div { class: "live-player-wrap",
@@ -181,23 +193,28 @@ fn LivePlayer(id: i64) -> Element {
 }
 
 /// `body`를 시청 스크립트 뒤에 붙여 실행하고 결과를 받는다.
-async fn run(body: &str) -> Result<(), String> {
+async fn run(body: &str) -> Result<(), PlayerFailure> {
     let script = format!(
         "{VIEWER_JS}
 try {{
   {body}
   dioxus.send({{ kind: \"ok\" }});
 }} catch (e) {{
-  dioxus.send({{ kind: \"error\", message: chzzkViewer.describe(e) }});
+  dioxus.send(chzzkViewer.isUnsupported(e)
+    ? {{ kind: \"unsupported\" }}
+    : {{ kind: \"error\", message: chzzkViewer.describe(e) }});
 }}"
     );
     let mut eval = document::eval(&script);
     let message: ViewerMessage = eval.recv().await.map_err(|_| {
-        "시청 화면에 문제가 생겼어요. 새로고침한 뒤 다시 시도해 주세요.".to_string()
+        PlayerFailure::Message(
+            "시청 화면에 문제가 생겼어요. 새로고침한 뒤 다시 시도해 주세요.".to_string(),
+        )
     })?;
     match message {
         ViewerMessage::Ok => Ok(()),
-        ViewerMessage::Error { message } => Err(message),
+        ViewerMessage::Unsupported => Err(PlayerFailure::Unsupported),
+        ViewerMessage::Error { message } => Err(PlayerFailure::Message(message)),
     }
 }
 
@@ -205,6 +222,8 @@ try {{
 const VIEWER_JS: &str = r#"
 window.chzzkViewer ??= (() => {
   class ViewerError extends Error {}
+  // 브라우저(웹뷰)에 WebRTC가 없다. 웹은 다른 브라우저를, 앱은 "웹에서 시청하기"를 안내한다.
+  class UnsupportedError extends Error {}
   const CONNECT_FAILED = "영상을 불러오지 못했어요. 잠시 뒤 새로고침해 주세요.";
   let current = null;
 
@@ -232,11 +251,9 @@ window.chzzkViewer ??= (() => {
     session.pc.close();
   }
 
-  async function start(id) {
+  async function start(whepUrl) {
     stop();
-    if (!window.RTCPeerConnection) {
-      throw new ViewerError("이 브라우저는 실시간 시청을 지원하지 않아요. 최신 Chrome이나 Safari로 열어 주세요.");
-    }
+    if (!window.RTCPeerConnection) throw new UnsupportedError();
     const session = { pc: new RTCPeerConnection(), location: null, closed: false };
     current = session;
     const pc = session.pc;
@@ -256,7 +273,7 @@ window.chzzkViewer ??= (() => {
     await pc.setLocalDescription(await pc.createOffer());
     await gathered(pc);
     if (session.closed) return;
-    const response = await fetch(`/api/live/${id}/whep`, {
+    const response = await fetch(whepUrl, {
       method: "POST",
       headers: { "Content-Type": "application/sdp" },
       body: pc.localDescription.sdp,
@@ -302,6 +319,10 @@ window.chzzkViewer ??= (() => {
     return error instanceof ViewerError ? error.message : CONNECT_FAILED;
   }
 
-  return { start, stop, unmute, describe };
+  function isUnsupported(error) {
+    return error instanceof UnsupportedError;
+  }
+
+  return { start, stop, unmute, describe, isUnsupported };
 })();
 "#;

@@ -1,4 +1,4 @@
-//! 앱 화면: 방송 목록과 방송 상세. 목록 칸·카드·방송 정보는 웹 화면의 조각(`broadcast_view`)을 그대로 쓴다.
+//! 앱 화면: 방송 목록과 방송 상세. 목록 칸·카드·방송 정보와 라이브 시청(`viewer::LivePlayer`)은 웹 화면의 조각을 그대로 쓴다.
 //!
 //! 앱에는 로그인·댓글·후원·등록·송출이 없다. 방송 상세의 "웹에서 열기"가 기본 브라우저에서 같은 방송의 웹 페이지를 연다(ADR 0009).
 
@@ -6,9 +6,10 @@ use dioxus::desktop::{Config, LogicalSize, WindowBuilder};
 use dioxus::prelude::*;
 
 use super::deploy_server::{ConnectionError, DeployServer};
-use crate::broadcast_view::{BroadcastInfo, BroadcastSections, LiveEndedNotice};
+use crate::broadcast_view::{use_live_status, BroadcastInfo, BroadcastSections, LiveEndedNotice};
 use crate::display::Mark;
 use crate::refresh::{sleep_ms, REFRESH_MS};
+use crate::viewer::LivePlayer;
 use crate::{Broadcast, BroadcastKind, MAIN_CSS};
 
 /// 빌드할 때 따로 정하지 않으면 앱이 부르는 배포 서버.
@@ -119,7 +120,7 @@ fn AppBroadcastList() -> Element {
     }
 }
 
-/// 방송 상세: 녹화 방송은 앱 안에서 재생하고, 라이브 방송은 웹에서 시청하도록 안내한다.
+/// 방송 상세: 녹화 방송도 라이브 방송도 앱 안에서 본다. 웹뷰에 WebRTC가 없으면 라이브는 웹에서 시청하도록 안내한다.
 #[component]
 fn AppBroadcastDetail(id: i64) -> Element {
     let server = use_context::<DeployServer>();
@@ -142,16 +143,33 @@ fn AppBroadcastDetail(id: i64) -> Element {
             }
         },
         Some(Ok(Some(broadcast))) => rsx! {
-            BroadcastView { broadcast }
+            BroadcastView { key: "{broadcast.id}", broadcast }
         },
     };
     view
 }
 
-/// 불러온 방송 하나의 상세.
+/// 불러온 방송 하나의 상세. 방송 중인 라이브는 5초마다 상태를 확인해 종료·제목 변경·삭제를 반영한다.
 #[component]
 fn BroadcastView(broadcast: Broadcast) -> Element {
     let server = use_context::<DeployServer>();
+    let fetch = {
+        let server = server.clone();
+        move |id: i64| {
+            let server = server.clone();
+            async move { server.broadcast(id).await }
+        }
+    };
+    let (current, deleted) = use_live_status(broadcast, fetch);
+    if deleted() {
+        return rsx! {
+            section { class: "empty",
+                p { "방송을 찾을 수 없습니다" }
+                Link { class: "button", to: AppRoute::AppBroadcastList {}, "목록으로" }
+            }
+        };
+    }
+    let broadcast = current();
     let web_page = server.web_page_url(broadcast.id);
     rsx! {
         article { class: "detail",
@@ -165,12 +183,9 @@ fn BroadcastView(broadcast: Broadcast) -> Element {
                     preload: "metadata",
                 }
             } else if broadcast.mark() == Mark::Live {
-                // 앱 안 라이브 시청은 다음 티켓에서 더한다. 지금은 웹에서 시청하도록 안내한다.
-                div { class: "live-ended", role: "status",
-                    p { class: "live-ended-title", "방송 중이에요" }
-                    p { "라이브 방송은 웹에서 시청할 수 있어요." }
-                    a { class: "button live-button", href: "{web_page}", target: "_blank", "웹에서 시청하기" }
-                }
+                // 웹과 같은 시청 스크립트로 배포 서버의 WHEP에 바로 연결한다.
+                // 방송이 끝나 이 부분이 사라지면 LivePlayer가 연결을 닫는다.
+                LivePlayer { whep_url: server.whep_url(broadcast.id), web_page: web_page.clone() }
             } else {
                 LiveEndedNotice {}
             }
