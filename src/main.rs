@@ -1,13 +1,19 @@
 // 테스트 함수 이름은 한국어 문장으로 쓴다(예: `제목과_MP4로_등록하면_201이다`).
 // 영어 대문자가 섞이면 Rust가 snake_case 경고를 내므로, 테스트 빌드에서만 이 경고를 끈다.
 #![cfg_attr(test, allow(non_snake_case))]
+// 앱(`app`)으로 빌드하면 웹 화면의 코드(후원·댓글·등록 화면 등)도 함께 컴파일되지만 쓰지 않는다.
+// 앱은 그중 방송 타입과 목록·상세 조각만 쓰므로, 앱 빌드에서만 "쓰지 않는 코드" 경고를 끈다.
+#![cfg_attr(feature = "app", allow(dead_code))]
 
 use chrono::{DateTime, FixedOffset, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(feature = "app", all(test, feature = "server")))]
+mod app;
 #[cfg(feature = "server")]
 mod auth;
+mod broadcast_view;
 mod comments;
 #[cfg(feature = "server")]
 mod config;
@@ -36,8 +42,8 @@ mod title;
 mod videos;
 mod viewer;
 
+use broadcast_view::{BroadcastInfo, BroadcastSections};
 use comments::CommentSection;
-use display::Mark;
 use donations::{DonationFail, DonationPanel, DonationSuccess};
 use login::{HeaderLogin, Login, RequireLogin, Signup};
 use manage::OwnerActions;
@@ -52,8 +58,12 @@ fn main() {
     #[cfg(feature = "server")]
     dioxus::serve(|| async move { server::router().await });
 
+    // 데스크톱 앱으로 빌드할 때: 배포 서버의 공개 API를 부르는 보기 전용 앱을 띄운다(ADR 0009).
+    #[cfg(feature = "app")]
+    app::launch();
+
     // 브라우저(WASM)로 빌드할 때: 화면만 띄운다.
-    #[cfg(not(feature = "server"))]
+    #[cfg(not(any(feature = "server", feature = "app")))]
     dioxus::launch(App);
 }
 
@@ -243,52 +253,10 @@ fn BroadcastList() -> Element {
             }
         };
     }
-    let live_now: Vec<Broadcast> = list
-        .iter()
-        .filter(|b| b.mark() == Mark::Live)
-        .cloned()
-        .collect();
     rsx! {
-        // 방송 중인 방송이 없으면 이 칸은 보이지 않는다.
-        if !live_now.is_empty() {
-            section { class: "live-now",
-                h2 { class: "section-title", "지금 라이브" }
-                ul { class: "broadcast-grid",
-                    for broadcast in live_now {
-                        li { key: "{broadcast.id}", BroadcastCard { broadcast } }
-                    }
-                }
-            }
-        }
-        section {
-            if list.iter().any(|b| b.mark() == Mark::Live) {
-                h2 { class: "section-title", "전체 방송" }
-            }
-            ul { class: "broadcast-grid",
-                for broadcast in list {
-                    li { key: "{broadcast.id}", BroadcastCard { broadcast } }
-                }
-            }
-        }
-    }
-}
-
-/// 목록의 카드 하나: 썸네일 자리와 표시(녹화·LIVE·종료), 제목, 시각.
-/// 시각은 녹화는 등록 시각, 라이브는 시작 시각이다.
-#[component]
-fn BroadcastCard(broadcast: Broadcast) -> Element {
-    let mark = broadcast.mark();
-    rsx! {
-        article { class: "card",
-            Link { class: "card-link", to: Route::BroadcastDetail { segment: broadcast.id.to_string() },
-                // 썸네일은 만들지 않으므로 회색 빈 칸을 두고, 왼쪽 위에 표시를 붙인다.
-                div { class: "thumbnail",
-                    span { class: "badge {mark.class()}", "{mark.label()}" }
-                }
-                h2 { class: "card-title", title: "{broadcast.title}", "{broadcast.title}" }
-                p { class: "card-owner", title: "{broadcast.owner_label()}", "{broadcast.owner_label()}" }
-                p { class: "card-time", "{format_kst(&broadcast.shown_time())}" }
-            }
+        BroadcastSections {
+            list,
+            detail_of: |id: i64| -> NavigationTarget { Route::BroadcastDetail { segment: id.to_string() }.into() },
         }
     }
 }
@@ -339,9 +307,7 @@ fn RecordedDetail(broadcast: Broadcast) -> Element {
                 playsinline: true,
                 preload: "metadata",
             }
-            h1 { class: "detail-title", "{broadcast.title}" }
-            p { class: "detail-owner", "{broadcast.owner_label()}" }
-            p { class: "card-time", "{format_kst(&broadcast.created_at)}" }
+            BroadcastInfo { broadcast: broadcast.clone() }
             OwnerActions {
                 broadcast: broadcast.clone(),
                 on_renamed: move |title| current.write().title = title,

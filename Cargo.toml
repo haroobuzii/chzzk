@@ -26,6 +26,8 @@ tower-http = { version = "0.6", features = ["fs"], optional = true }
 [features]
 default = ["web"]
 web = ["dioxus/web"]
+# 데스크톱 앱(녹화방송): 서버 기능 없이 배포 서버의 공개 API만 부르는 보기 전용 앱이다(ADR 0009).
+app = ["dioxus/desktop", "dep:reqwest"]
 server = ["dioxus/server", "dep:sqlx", "dep:anyhow", "dep:dotenvy", "dep:axum", "dep:tempfile", "dep:tokio", "dep:tower", "dep:tower-http", "dep:hex", "dep:log", "dep:rand", "dep:reqwest", "dep:sha2", "dep:argon2"]
 
 # 비밀번호 해시(Argon2)는 최적화하지 않으면 한 번에 1초 넘게 걸려 테스트가 느려진다. 이 둘만 개발 빌드에서도 최적화한다.

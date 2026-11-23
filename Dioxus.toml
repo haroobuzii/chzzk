@@ -10,3 +10,8 @@ script = []
 
 [web.resource.dev]
 script = []
+
+# 데스크톱 앱(녹화방송) 번들 설정. `dx bundle --desktop`이 읽는다.
+[bundle]
+identifier = "com.haroobuzii.chzzk"
+publisher = "haroobuzii"
