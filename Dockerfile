@@ -25,7 +25,9 @@ RUN cargo chef cook --profile server-release --target "$(rustc -vV | sed -n 's/^
         --no-default-features --features server --recipe-path recipe.json \
     && RUSTFLAGS='--cfg getrandom_backend="wasm_js"' \
         cargo chef cook --profile wasm-release --target wasm32-unknown-unknown --recipe-path recipe.json
-RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash \
+# cargo-binstall은 정해 둔 릴리스(태그의 설치 스크립트와 그 버전의 바이너리)만 받는다.
+RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/v1.26.2/install-from-binstall-release.sh \
+        | BINSTALL_VERSION=v1.26.2 bash \
     && cargo binstall dioxus-cli@0.7.10 --root /.cargo -y --force
 ENV PATH="/.cargo/bin:$PATH"
 COPY . .

@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  # 워크플로·셸 스크립트·운영용 compose 파일의 문법을 본다. 빌드가 필요 없어 금방 끝난다.
+  # 워크플로·셸 스크립트·배포 서버용 compose 파일의 문법을 본다. 빌드가 필요 없어 금방 끝난다.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -28,7 +28,7 @@ jobs:
         run: git ls-files -z '*.sh' | xargs -0 shellcheck
 
       # 서버에서 쓰는 compose 파일이 해석되는지 본다. 값은 .env.example의 자리표시자다.
-      - name: 운영용 compose 검사
+      - name: 배포 서버용 compose 검사
         run: docker compose -f deploy/compose.yml --env-file deploy/.env.example config -q
 
   check:

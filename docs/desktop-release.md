@@ -10,6 +10,7 @@ main에 올리면 `.github/workflows/app-release.yml`이 Windows·맥 설치 파
 | `macos-15`(arm64) | `chzzk-macos-arm64.dmg` | `.../releases/download/app-latest/chzzk-macos-arm64.dmg` |
 | `macos-15-intel`(x64) | `chzzk-macos-x64.dmg` | `.../releases/download/app-latest/chzzk-macos-x64.dmg` |
 
+- CI와 같은 검사·테스트(`ci.yml`)가 통과해야 묶기를 시작한다. 도는 중인 실행은 새 푸시가 와도 끊지 않는다.
 - 세 파일이 모두 만들어졌을 때만 Release를 바꾼다. 태그 `app-latest`는 그때의 main 커밋으로 옮긴다.
 - 앱이 부르는 서버는 `https://chzzk.haroobuzii.com`이다(`CHZZK_APP_SERVER_URL`).
 - `workflow_dispatch`로 손으로도 돌릴 수 있다.

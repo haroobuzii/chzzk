@@ -20,7 +20,9 @@ env:
 
 jobs:
   # CI와 같은 검사·테스트. 하나라도 실패하면 아래 단계는 돌지 않는다.
+  # 손으로 돌릴 때(workflow_dispatch)도 main에서만 배포한다. 다른 브랜치를 고르면 아무것도 하지 않는다.
   ci:
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/ci.yml
 
   image:

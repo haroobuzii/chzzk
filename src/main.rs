@@ -2,8 +2,8 @@
 // 영어 대문자가 섞이면 Rust가 snake_case 경고를 내므로, 테스트 빌드에서만 이 경고를 끈다.
 #![cfg_attr(test, allow(non_snake_case))]
 // 앱(`app`)으로 빌드하면 웹 화면의 코드(후원·댓글·등록 화면 등)도 함께 컴파일되지만 쓰지 않는다.
-// 앱은 그중 방송 타입과 목록·상세 조각만 쓰므로, 앱 빌드에서만 "쓰지 않는 코드" 경고를 끈다.
-#![cfg_attr(feature = "app", allow(dead_code))]
+// 앱은 그중 방송 타입과 목록·상세 조각만 쓰므로, 웹 전용 모듈과 항목에만 앱 빌드의 "쓰지 않는 코드" 경고를 끈다
+// (`#[cfg_attr(feature = "app", allow(dead_code))]`가 붙은 곳).
 
 use chrono::{DateTime, FixedOffset, Utc};
 use dioxus::prelude::*;
@@ -14,12 +14,14 @@ mod app;
 #[cfg(feature = "server")]
 mod auth;
 mod broadcast_view;
+#[cfg_attr(feature = "app", allow(dead_code))]
 mod comments;
 #[cfg(feature = "server")]
 mod config;
 #[cfg(feature = "server")]
 mod db;
 mod display;
+#[cfg_attr(feature = "app", allow(dead_code))]
 mod donations;
 #[cfg(feature = "server")]
 mod download;
@@ -27,10 +29,15 @@ mod download;
 mod health;
 #[cfg(feature = "server")]
 mod live;
+#[cfg_attr(feature = "app", allow(dead_code))]
 mod login;
+#[cfg_attr(feature = "app", allow(dead_code))]
 mod manage;
+#[cfg_attr(feature = "app", allow(dead_code))]
 mod number;
+#[cfg_attr(feature = "app", allow(dead_code))]
 mod publisher;
+#[cfg_attr(feature = "app", allow(dead_code))]
 mod refresh;
 #[cfg(feature = "server")]
 mod routes;
@@ -152,6 +159,7 @@ async fn get_broadcast(id: i64) -> Result<Option<Broadcast>, ServerFnError> {
 // Rust 1.100부터 Dioxus 0.7의 `Routable` 매크로가 만든 코드에 "unreachable call" 경고가 난다.
 // 우리 코드가 아니라 매크로가 만든 코드라서, 화면 주소 정의만 작은 모듈에 담아 그 안에서만 끈다.
 #[allow(unreachable_code)]
+#[cfg_attr(feature = "app", allow(dead_code))]
 mod route {
     use super::*;
 
@@ -415,6 +423,7 @@ fn RegisterForm() -> Element {
 ///
 /// 업로드는 브라우저의 XMLHttpRequest가 보낸다. 큰 파일을 WASM 메모리로 옮기지 않기 위해서다.
 /// 보내는 동안 `on_progress`로 진행률(0~100)을 알린다.
+#[cfg_attr(feature = "app", allow(dead_code))]
 async fn upload(mut on_progress: impl FnMut(u8)) -> Result<i64, String> {
     let mut script = document::eval(UPLOAD_SCRIPT);
     loop {
@@ -429,6 +438,7 @@ async fn upload(mut on_progress: impl FnMut(u8)) -> Result<i64, String> {
 }
 
 /// 업로드 스크립트가 Rust 쪽으로 보내는 소식.
+#[cfg_attr(feature = "app", allow(dead_code))]
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum UploadMessage {
@@ -439,6 +449,7 @@ enum UploadMessage {
 }
 
 /// 등록 API 응답을 방송 번호나 사용자에게 보여 줄 문구로 바꾼다.
+#[cfg_attr(feature = "app", allow(dead_code))]
 fn upload_result(status: u16, body: &str) -> Result<i64, String> {
     let json: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
     if status == 201 {
@@ -456,6 +467,7 @@ fn upload_result(status: u16, body: &str) -> Result<i64, String> {
 }
 
 /// 등록 화면의 입력을 읽어 XMLHttpRequest로 보내고, 결과를 `dioxus.send`로 알린다.
+#[cfg_attr(feature = "app", allow(dead_code))]
 const UPLOAD_SCRIPT: &str = r#"
 const form = document.getElementById("register-form");
 const data = new FormData();
@@ -497,6 +509,7 @@ mod tests {
 }
 
 /// 서버 함수 에러를 사용자에게 보여 줄 문구로 바꾼다.
+#[cfg_attr(feature = "app", allow(dead_code))]
 fn error_message(error: &ServerFnError) -> String {
     match error {
         ServerFnError::ServerError { message, .. } => message.clone(),

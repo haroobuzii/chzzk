@@ -5,7 +5,7 @@
 #   scripts/bundle-app.sh dmg chzzk-macos-arm64.dmg     # 맥
 #   scripts/bundle-app.sh msi chzzk-windows-x64.msi     # Windows(Git Bash)
 #
-# 결과는 dist/<파일 이름>에 놓인다. 서버 주소는 CHZZK_APP_SERVER_URL(없으면 운영 주소)로 빌드한다.
+# 결과는 dist/<파일 이름>에 놓인다. 서버 주소는 CHZZK_APP_SERVER_URL(없으면 배포 서버 주소)로 빌드한다.
 #
 # 맥 서명·공증: 아래 값이 모두 있으면 Developer ID로 서명하고 공증한다. 하나라도 없으면
 # ad-hoc 서명만 한 앱을 만들고 그 사실을 알린다. 값의 뜻은 docs/desktop-release.md에 있다.

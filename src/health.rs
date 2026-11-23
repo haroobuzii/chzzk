@@ -95,7 +95,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn healthy_server_reports_ok(pool: PgPool) {
+    async fn DB와_MediaMTX가_정상이면_200과_ok다(pool: PgPool) {
         let fake = FakeMediaMtx::start().await;
         let response = get_healthz(HealthState {
             pool,
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn unreachable_mediamtx_still_reports_ok(pool: PgPool) {
+    async fn MediaMTX에_닿지_않아도_200이고_unreachable로_알린다(pool: PgPool) {
         let fake = FakeMediaMtx::start().await;
         fake.set_unreachable(true);
         let response = get_healthz(HealthState {
@@ -129,7 +129,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn closed_database_reports_503(pool: PgPool) {
+    async fn DB에_닿지_않으면_503이다(pool: PgPool) {
         let fake = FakeMediaMtx::start().await;
         pool.close().await;
         let response = get_healthz(HealthState {
@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[sqlx::test]
-    async fn reports_build_version_without_caching(pool: PgPool) {
+    async fn 빌드_버전을_캐시하지_않게_알린다(pool: PgPool) {
         let fake = FakeMediaMtx::start().await;
         let response = get_healthz(HealthState {
             pool,

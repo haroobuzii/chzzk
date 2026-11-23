@@ -8,16 +8,22 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 같은 Release를 두 실행이 동시에 덮어쓰지 않게 한다. 새로 올라오면 이전 실행은 멈춘다.
+# 같은 Release를 두 실행이 동시에 덮어쓰지 않게 한다. 도는 중인 실행은 끊지 않고(올리다 만 Release를 남기지 않게),
+# 새 푸시는 그 뒤에 기다린다.
 concurrency:
   group: app-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  # CI와 같은 검사·테스트. 하나라도 실패하면 앱을 묶지도 올리지도 않는다.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   bundle:
+    needs: ci
     name: ${{ matrix.asset }}
     strategy:
       fail-fast: false
@@ -51,7 +57,10 @@ jobs:
           key: app-${{ matrix.asset }}
 
       # dx는 미리 빌드된 파일을 받는다. 버전은 Cargo.toml의 dioxus와 맞춘다.
-      - uses: cargo-bins/cargo-binstall@main
+      # cargo-binstall은 커밋 SHA(v1.26.2)로 고정하고, 받는 바이너리 버전도 같게 맞춘다.
+      - uses: cargo-bins/cargo-binstall@851112458b5f28a29e5bc14a690c3f283d9dcc6f # v1.26.2
+        with:
+          version: 1.26.2
       - name: dx 설치
         run: cargo binstall dioxus-cli@0.7.10 -y --force
 

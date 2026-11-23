@@ -2,7 +2,7 @@
 
 Windows·macOS·iOS 앱은 같은 Dioxus 코드로 만들고, 배포 서버의 방송 목록 조회, 녹화 방송 재생, 라이브 방송 시청만 한다. 방송 화면의 "웹에서 열기"(로그인, 댓글, 후원) 버튼은 기본 브라우저에서 `https://chzzk.haroobuzii.com/broadcasts/<번호>`를 연다.
 
-앱 안의 웹뷰는 출처가 배포 서버와 달라서(`dioxus://…`, `http://dioxus.index.html`) 로그인 쿠키(ADR 0006)가 서버로 가지 않는다. 토스 결제창도 결제 뒤 배포 서버 주소로 돌아오도록 되어 있어 앱 안에서는 흐름이 끊긴다. 목록은 앱의 Rust 코드가 배포 서버의 JSON API를 부르고, 녹화 재생은 `<video src="https://…/video">`로 하며, 라이브 시청(WHEP)만 웹뷰 JavaScript에서 부르므로 그 경로에 CORS를 연다. macOS 웹뷰에서 WebRTC가 안 되면 라이브는 "웹에서 열기"로 대신한다.
+앱 안의 웹뷰는 출처가 배포 서버와 달라서(`dioxus://…`, `http://dioxus.index.html`) 로그인 쿠키(ADR 0006)가 서버로 가지 않는다. 토스 결제창도 결제 뒤 배포 서버 주소로 돌아오도록 되어 있어 앱 안에서는 흐름이 끊긴다. 목록은 앱의 Rust 코드가 배포 서버의 JSON API를 부르고, 녹화 재생은 `<video src="https://…/video">`로 하며, 라이브 시청(WHEP)은 웹뷰 JavaScript에서 부른다. 앱 출처(`dioxus://index.html`, `http(s)://dioxus.index.html`)에는 WHEP 연결·세션과 함께 공개 읽기 GET(방송 목록·단건·영상)에도 CORS를 연다. 웹뷰에서 나가는 이 요청들도 앱 출처를 달고 가기 때문이다. 공개 읽기는 누구나 볼 수 있는 내용이고, 쿠키 허용 헤더(`Access-Control-Allow-Credentials`)는 붙이지 않아 로그인 쿠키가 실리지 않으므로 열어도 새로 드러나는 것이 없다. 로그인·댓글·후원 같은 상태 변경은 지금처럼 같은 출처만 받는다. macOS 웹뷰에서 WebRTC가 안 되면 라이브는 "웹에서 열기"로 대신한다.
 
 ## Considered Options
 

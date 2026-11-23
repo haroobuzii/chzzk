@@ -4,7 +4,7 @@ main에 올리면 `.github/workflows/deploy.yml`이 배포 서버(`https://chzzk
 
 ## 흐름
 
-1. **검사·테스트**: `ci.yml`을 그대로 부른다(actionlint, shellcheck, 운영용 compose 검사, fmt, 세 빌드 검사, 테스트, README 개수, 비밀 키 검사). 하나라도 실패하면 아래는 돌지 않는다.
+1. **검사·테스트**: `ci.yml`을 그대로 부른다(actionlint, shellcheck, 배포 서버용 compose 검사, fmt, 세 빌드 검사, 테스트, README 개수, 비밀 키 검사). 하나라도 실패하면 아래는 돌지 않는다.
 2. **이미지**: `ubuntu-24.04-arm` 러너에서 Dockerfile로 ARM64 이미지를 만들어 `ghcr.io/haroobuzii/chzzk:<짧은 해시>`와 `:latest`로 올린다. 빌드 캐시는 GitHub Actions 캐시(gha)에 둔다.
 3. **서버 바꾸기**: `scripts/deploy-server.sh`가 SSH로 들어가 아래를 한다.
    - `deploy/compose.yml`을 `/srv/chzzk/compose.yml`로 덮어쓴다.

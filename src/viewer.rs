@@ -283,7 +283,13 @@ window.chzzkViewer ??= (() => {
       try { message = (await response.json()).message; } catch (_) {}
       throw new ViewerError(message || CONNECT_FAILED);
     }
-    session.location = response.headers.get("Location");
+    // 서버는 세션 주소를 상대 주소(`/api/live/N/whep/<id>`)로 준다. 앱 웹뷰에서는 그대로 쓰면
+    // 앱 출처(`dioxus://…`)를 기준으로 풀리므로, WHEP 주소를 기준으로 절대 주소로 바꿔 둔다.
+    // 웹은 WHEP 주소가 상대 주소라 페이지 주소를 기준으로 풀려 지금과 같다.
+    const location = response.headers.get("Location");
+    session.location = location
+      ? new URL(location, new URL(whepUrl, document.baseURI)).href
+      : null;
     const answer = await response.text();
     // 기다리는 사이 화면을 떠났으면 바로 끊는다.
     if (session.closed) {
