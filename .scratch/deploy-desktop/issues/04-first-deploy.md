@@ -11,10 +11,19 @@
 
 **Blocked by:** 03, 오라클 VM 생성(완료)
 
-**Status:** ready-for-human
+**Status:** done
 
-- [ ] `https://chzzk.haroobuzii.com/healthz`가 외부에서 200이다.
-- [ ] `http://`로 들어오면 `https://`로 옮겨진다.
-- [ ] 휴대폰 LTE에서 라이브 송출·시청이 된다.
-- [ ] 서버를 다시 켜도(`sudo reboot`) 데이터가 남고 서비스가 자동으로 돈다.
-- [ ] 비밀 값은 서버 `.env`에만 있다.
+- [x] `https://chzzk.haroobuzii.com/healthz`가 외부에서 200이다.
+- [x] `http://`로 들어오면 `https://`로 옮겨진다.
+- [x] 휴대폰 LTE에서 라이브 송출·시청이 된다.
+- [x] 서버를 다시 켜도(`sudo reboot`) 데이터가 남고 서비스가 자동으로 돈다.
+- [x] 비밀 값은 서버 `.env`에만 있다.
+
+**확인 기록 (2026-11-23)**
+
+- Cloudflare `chzzk` A 레코드 → `129.221.239.104`, DNS only. 1.1.1.1·8.8.8.8·Cloudflare 네임서버 모두 같은 IP로 응답.
+- 첫 이미지는 이 맥에서 ARM64로 빌드해 `docker save | ssh docker load`로 옮겼다(GHCR는 05에서).
+- Caddy가 Let's Encrypt 인증서를 받았고, `/healthz` 200(`version` 32c4a43), `http://` → 308.
+- 서버 `.env`: DB 비밀번호는 서버에서 무작위 생성, 토스 테스트 키는 사용자 허락 후 값을 출력하지 않고 SSH로 옮김.
+- 사용자가 휴대폰 LTE에서 가입·로그인, 녹화 업로드·재생, 라이브 송출·시청, 댓글, 테스트 후원을 확인("잘 돼").
+- `sudo reboot` 뒤 서비스가 스스로 다시 떴고 `/healthz` 200, 올린 녹화 방송이 그대로 남아 있었다.
