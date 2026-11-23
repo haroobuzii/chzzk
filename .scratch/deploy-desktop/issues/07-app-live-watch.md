@@ -9,8 +9,8 @@
 
 **Blocked by:** 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 맥 앱에서 로컬 서버의 라이브를 시청한다(또는 안 되면 안내가 뜬다).
-- [ ] 방송 종료가 앱에 반영된다.
-- [ ] 확인 결과(OS별 되는지)를 README 기록용 메모에 남긴다.
+- [x] 맥 앱에서 로컬 서버의 라이브를 시청한다(또는 안 되면 안내가 뜬다).
+- [x] 방송 종료가 앱에 반영된다.
+- [x] 확인 결과(OS별 되는지)를 README 기록용 메모에 남긴다. (`.scratch/deploy-desktop/manual-checks.md`, 맥 완료·Windows는 나중에 채운다)
