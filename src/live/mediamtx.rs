@@ -119,6 +119,12 @@ impl MediaMtx {
         Ok(())
     }
 
+    /// 관리 API에 닿아 정상 응답을 받는지. 상태 확인(`/healthz`)이 쓴다.
+    pub async fn is_reachable(&self) -> bool {
+        let url = format!("{}/v3/paths/list?itemsPerPage=1", self.api_url);
+        matches!(self.http.get(&url).send().await, Ok(response) if response.status().is_success())
+    }
+
     /// 관리 API의 경로 목록 전부(모든 쪽).
     async fn paths(&self) -> anyhow::Result<Vec<ApiPath>> {
         let mut paths = Vec::new();

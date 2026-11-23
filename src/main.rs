@@ -16,6 +16,8 @@ mod db;
 mod display;
 mod donations;
 #[cfg(feature = "server")]
+mod health;
+#[cfg(feature = "server")]
 mod live;
 mod login;
 mod manage;
