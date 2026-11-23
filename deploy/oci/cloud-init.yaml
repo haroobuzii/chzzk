@@ -1,0 +1,16 @@
+#cloud-config
+# 서버가 처음 켜질 때 한 번 실행된다. Docker를 설치하고, 이미지 안 방화벽(iptables)에 웹·라이브 포트를 연다.
+# Oracle의 Ubuntu 이미지는 VCN 보안 목록과 별도로 iptables가 22번 말고는 막고 있다(docs/deploy-notes.md).
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - iptables-persistent
+runcmd:
+  - iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
+  - iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+  - iptables -I INPUT 6 -p udp --dport 8189 -j ACCEPT
+  - netfilter-persistent save
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker ubuntu
+  - mkdir -p /srv/chzzk && chown ubuntu:ubuntu /srv/chzzk
