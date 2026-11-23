@@ -129,7 +129,12 @@ Status: ready-for-agent
     - 앱 웹뷰 출처(Windows `http://dioxus.index.html`, macOS·iOS `dioxus://index.html` 계열)에서 오는 요청만 허용한다.
     - 대상은 공개 읽기 경로(방송 목록·단건·영상)와 시청 연결(WHEP POST·PATCH·DELETE)뿐이다. 쿠키는 허용하지 않는다(`credentials` 없음).
     - 나머지 경로와 상태 변경 요청은 지금처럼 같은 출처만 받는다(ADR 0006 CSRF).
-  - 앱이 쓸 방송 목록·단건 조회는 기존 공개 API를 그대로 쓴다. 필요하면 앱이 부르기 쉬운 GET JSON 주소를 문서화한다.
+  - 앱이 쓸 방송 목록·단건 조회는 기존 공개 API(웹 화면이 부르는 서버 함수의 GET 주소)를 그대로 쓴다. 새 주소는 만들지 않는다.
+    - `GET /api/broadcasts/list`: 200과 방송 배열(최신순).
+    - `GET /api/broadcasts/info?id=<번호>`: 200과 방송 하나, 없으면 200과 `null`. 번호가 숫자가 아니면 오류다. 준비·버려짐 라이브는 목록에도 단건에도 없다.
+    - 방송 하나의 모양: `{id, title, created_at, kind, status, started_at, ended_at, owner}`. `kind`는 `"Recorded"`·`"Live"`, `status`는 라이브만 `"Live"`·`"Ended"`(녹화는 `null`), 시각은 RFC 3339 UTC, `owner`는 아이디 또는 `null`(익명).
+    - DB 실패는 500이다. 앱은 2xx가 아니면 연결 실패 문구를 보인다.
+    - 녹화 영상은 `GET /api/broadcasts/<번호>/video`(Range 지원), 시청 연결은 `POST /api/live/<번호>/whep`과 그 응답 `Location`의 세션 주소(PATCH·DELETE)다.
   - 다운로드 페이지(`/download`)를 웹 화면에 더한다. 머리글이나 첫 화면에서 링크한다.
     - 파일 링크는 GitHub Releases의 고정 태그 주소다(아래 "앱 빌드·배포").
     - TestFlight 링크는 설정 값이다(비어 있으면 "준비 중").
